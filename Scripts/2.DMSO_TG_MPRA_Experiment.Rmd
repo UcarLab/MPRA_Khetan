@@ -60,7 +60,7 @@ print(a)
 # Read Annotations for elements tested (generated from Script 1)
 ```{r}
 # Read Sequence Annotations and format
-Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T2D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
 Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
 
 # Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
@@ -501,7 +501,7 @@ dds_counts <- temp; rm(temp)
 
 ############################## Combine on a per loci basis
 # Read Sequence Annotations and format
-Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T2D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
 Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
 
 # Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)

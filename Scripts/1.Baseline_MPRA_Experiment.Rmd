@@ -122,7 +122,7 @@ dds_counts_EnhCalls_df$EnhCall <- as.numeric(levels(dds_counts_EnhCalls_df$EnhCa
 Read Annotations for elements tested and analyze
 ```{r}
 # Read Sequence Annotations and format
-Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T2D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
 Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
 
 # Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
@@ -201,7 +201,7 @@ Baseline_MPRA_EnhCalls <- temp_df; rm(temp_df)
 Format to run t.tests
 ```{r}
 # Read Sequence Annotations and format
-Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T2D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
 Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
 
 # Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
