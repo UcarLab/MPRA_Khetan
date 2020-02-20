@@ -1,0 +1,307 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+# Needs to be changed according to user #
+
+path <- "~/Desktop/Lab/MPRA_MIN6/CompiledCode/"
+
+# Needs to be changed according to user #
+```
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath(path)) 
+```
+
+# QC
+```{r}
+library(pheatmap); library(ggplot2); library(DESeq2); library(ggrepel)
+################################################################# Global Variables
+Cutoff_Value <- 0.01
+NumReplicates <- 5
+
+################################################################# Read data 
+data <- read.table("./Reference_Files/Read_Count_Matrices/MIN6_MPRA_Baseline_FinalMatrix.out", row.names = 1) # Reading MPRA Combined matrix 
+colnames(data) <- c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "Plasmid_R6", "RNA_R1", "RNA_R2", "RNA_R2*", "RNA_R3", "RNA_R4", "RNA_R4*", "RNA_R5", "RNA_R6", "RNA_R6*") # Annotating samples
+
+# Select replicates for analysis
+columnsToKeep <- c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "RNA_R2", "RNA_R3", "RNA_R4*", "RNA_R5", "RNA_R6*")
+data <- data[,columnsToKeep];  # Removing samples that were sequenced twice
+colnames(data) <- c(paste("Plasmid_R", 1:NumReplicates, sep=""), paste("RNA_R", 1:NumReplicates, sep="")) # Re-Annotating data frame
+
+################################################################# QC
+# Correlation Heatmap
+CorrelationMatrix_pearson <- matrix(nrow=ncol(data),ncol=ncol(data))
+CorrelationMatrix_spearman <- matrix(nrow=ncol(data),ncol=ncol(data))
+for(i in 1:ncol(data)){
+  for(j in 1:ncol(data)){
+    CorrelationMatrix_pearson[i,j] <- cor(data[,i],data[,j],method="pearson")
+    CorrelationMatrix_spearman[i,j] <- cor(data[,i],data[,j],method="spearman")}}
+colnames(CorrelationMatrix_pearson)<-as.vector(colnames(data)); colnames(CorrelationMatrix_spearman)<-as.vector(colnames(data))
+rownames(CorrelationMatrix_pearson)<-as.vector(colnames(data)); rownames(CorrelationMatrix_spearman)<-as.vector(colnames(data))
+pheatmap(CorrelationMatrix_pearson,cluster_rows=TRUE,cluster_cols=TRUE,
+         show_rownames=TRUE,show_colnames=TRUE,display_numbers=TRUE,main="R (pearson)", fontsize = 18)
+pheatmap(CorrelationMatrix_spearman,cluster_rows=TRUE,cluster_cols=TRUE,
+         show_rownames=TRUE,show_colnames=TRUE,display_numbers=TRUE,main="R (spearman)", fontsize = 18)
+
+# PCA
+y_pca_all <- prcomp(data, center=TRUE, scale.=TRUE)
+PCA_Matrix <- data.frame(y_pca_all$rotation)
+# Plotting PCA
+a <- ggplot(data.frame(y_pca_all$rotation), aes(x=PC1, y=PC2, label=rownames(PCA_Matrix))) + geom_point(color=c(rep("red", times=5), rep("black", times=5)), size=2) + ggtitle("PCA (All)") + 
+  xlab(paste("PC1 [",summary(y_pca_all)$importance[2,1]*100,"% Variance Explained]")) + ylab(paste("PC2 [",summary(y_pca_all)$importance[2,2]*100,"% Variance Explained]")) +
+  theme(text=element_text(size=24)) + geom_text_repel(size = 8, box.padding = unit(0.5, "lines"), point.padding = unit(0.35, "lines"), colour = "black")
+print(a)
+
+```
+
+
+# Run DESeq2 (MPRA activity)
+```{r}
+# Format files to run DESeq2 
+condition <- relevel(as.factor(c(rep("Plasmid", NumReplicates),rep("MIN6_Baseline", NumReplicates))), ref = "Plasmid")
+batch <- relevel(as.factor(c(rep("Run1", 1), rep("Run2", NumReplicates-1), rep("Run1", 2), "Run2", "Run1", "Run2")), ref = "Run1")
+colData <- data.frame(row.names=as.character(1:(NumReplicates*2)), batch=batch, condition=condition)
+colnames(data) <- rownames(colData)
+
+# Run DESeq2 for BATCH
+dds <- DESeqDataSetFromMatrix(countData=data, colData=colData, design=~condition+batch)
+dds_results <- DESeq(dds, fitType='local')
+
+# DESeq2 output
+dds_results_Batch_df <- data.frame(results(dds_results))
+dds_results_Batch_df$BatchCall <- (dds_results_Batch_df$padj<Cutoff_Value & dds_results_Batch_df$log2FoldChange>0)*1 + (dds_results_Batch_df$padj<Cutoff_Value & dds_results_Batch_df$log2FoldChange<0)*-1
+dds_results_Batch_df <- na.omit(dds_results_Batch_df)
+print("Number of Sequences showing sigfnificant 'activity' with BATCH Variable")
+table(dds_results_Batch_df$BatchCall)
+
+# Vector with 1 denoting sequences showing sigfnificant 'activity' with BATCH Variable
+Batch_Vec <- rownames(dds_results_Batch_df[which(dds_results_Batch_df$BatchCall==1),])
+
+# Run DESeq2 with CONDITION
+dds <- DESeqDataSetFromMatrix(countData=data, colData=colData, design=~batch+condition)
+dds_results <- DESeq(dds, fitType='local')
+
+# DESeq2 output
+dds_results_EnhCalls_df <- data.frame(results(dds_results))
+dds_results_EnhCalls_df$EnhCall <- (dds_results_EnhCalls_df$padj<Cutoff_Value & dds_results_EnhCalls_df$log2FoldChange>0)*1 
+dds_results_EnhCalls_df <- na.omit(dds_results_EnhCalls_df)
+table(dds_results_EnhCalls_df$EnhCall)
+
+# Histogram of logFC and pvalues
+hist(dds_results_EnhCalls_df$log2FoldChange, breaks=1000, xlab="Mean log2FC", ylab="Number of sequences", main="Mean LogFC (DESeq2 normalized)")
+abline(v=0, col="red") # DESeq2 logFC histogram
+hist(dds_results_EnhCalls_df$pvalue, breaks=5000, main="Histogram of pvalues for enhancer calls (DESeq2)") # DESeq2 pvalues histogram
+
+# Obtain normalized read counts from DESeq2
+dds_counts <- counts(dds_results, normalized=TRUE)
+colnames(dds_counts) <- c(paste("Plasmid_R", 1:NumReplicates, sep=""), paste("RNA_R", 1:NumReplicates, sep=""))
+
+# Annotate dds_counts with enhancer calls
+dds_counts_EnhCalls_df <- merge(dds_counts, dds_results_EnhCalls_df, by=0, all.x=TRUE)
+rownames(dds_counts_EnhCalls_df) <- dds_counts_EnhCalls_df[,1]; dds_counts_EnhCalls_df <- dds_counts_EnhCalls_df[,-1]
+
+# MA Plot 
+dds_counts_EnhCalls_df$EnhCall <- as.factor(dds_counts_EnhCalls_df$EnhCall)
+dds_counts_EnhCalls_df$MeanPlasmidCount <- rowMeans(dds_counts_EnhCalls_df[,paste("Plasmid_R", 1:NumReplicates, sep="")])
+a <- ggplot(dds_counts_EnhCalls_df, aes(x=MeanPlasmidCount, y=log2FoldChange, color=EnhCall)) + geom_point(size=1) + ggtitle("MA Plot of Enhancer Calls (Baseline)") + 
+  xlab("Plasmid Count") + ylab("log2(Fold Change)") + theme(text=element_text(size=24), legend.position = "none") + scale_color_manual(values=c("black", "red"))
+print(a)
+
+dds_counts_EnhCalls_df$EnhCall <- as.numeric(levels(dds_counts_EnhCalls_df$EnhCall))[dds_counts_EnhCalls_df$EnhCall]
+```
+
+
+Read Annotations for elements tested and analyze
+```{r}
+# Read Sequence Annotations and format
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
+
+# Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
+Unique_SNPs <- unique(Sequence.SnpID.CHR.START_Annotations$SNP_ID)
+Sequence.SnpID.CHR.START_Annotations_2 <- Sequence.SnpID.CHR.START_Annotations[which(Sequence.SnpID.CHR.START_Annotations$SEQUENCE %in% c(paste(Unique_SNPs, "A", sep="_"), paste(Unique_SNPs, "B", sep="_")) ),]
+SNPs_With_2_Sequences_annotations <- unique(Sequence.SnpID.CHR.START_Annotations_2[,-1])
+
+# Obtain MPRA activity per loci
+SNPs_With_2_Sequences_cts <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_annotations))
+{
+  Sequence_IDs <- Sequence.SnpID.CHR.START_Annotations_2$SEQUENCE[which(Sequence.SnpID.CHR.START_Annotations_2$SNP_ID %in% SNPs_With_2_Sequences_annotations$SNP_ID[i])]
+  TEST_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID[i],
+                   substring(Sequence_IDs[1], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2),
+                   substring(Sequence_IDs[2], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2), sep="_")
+  temp_cts <- c(dds_counts_EnhCalls_df[which(rownames(dds_counts_EnhCalls_df) %in% Sequence_IDs[1]), c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "EnhCall")], 
+                dds_counts_EnhCalls_df[which(rownames(dds_counts_EnhCalls_df) %in% Sequence_IDs[2]),c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "EnhCall")])
+  temp_row_names <- rownames(SNPs_With_2_Sequences_cts)
+  SNPs_With_2_Sequences_cts <- rbind(SNPs_With_2_Sequences_cts, temp_cts) # Count DF
+  rownames(SNPs_With_2_Sequences_cts) <- c(temp_row_names, as.character(TEST_ID))
+}
+# SNPs with 2 sequences only
+colnames(SNPs_With_2_Sequences_cts) <- c(paste(c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "EnhCall"), "REF", sep = "_"), 
+                                         paste(c("baseMean", "log2FoldChange", "lfcSE", "stat", "pvalue", "padj", "EnhCall"), "ALT", sep = "_"))
+
+# Sanity checks
+nrow(SNPs_With_2_Sequences_cts)==nrow(SNPs_With_2_Sequences_annotations)
+nrow(SNPs_With_2_Sequences_cts) == sum((rownames(SNPs_With_2_Sequences_cts) == paste(SNPs_With_2_Sequences_annotations$SNP_ID, "_A_B", sep=""))*1)
+
+# Merge to get annotations
+SNPs_With_2_Sequences_annotations$SNP_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID, "A_B", sep = "_")
+temp <- merge(SNPs_With_2_Sequences_annotations, SNPs_With_2_Sequences_cts,
+              by.x = "SNP_ID", by.y = 0)
+Baseline_MPRA_EnhCalls <- temp; rm(temp)
+
+# Obtain Enhancer calls per element
+Baseline_MPRA_EnhCalls$EnhCall <- (Baseline_MPRA_EnhCalls$EnhCall_REF==1 | Baseline_MPRA_EnhCalls$EnhCall_ALT==1)*1
+
+# Are ATAC-seq/ChIP-seq peaks enriched in MPRA active elements under Baseline? 
+temp_df <- Baseline_MPRA_EnhCalls
+
+ColumnsToTest <- c("ATAC_Peak", "PDX1", "FOXA2", "H2A.Z", "H3K27ac", "MAFB", "NKX6.1", "CTCF")
+Enh_OddsRatio_pvalue <- data.frame()
+for(i in 1:length(ColumnsToTest))
+{
+  temp_Enh_df <- as.data.frame.matrix(table(Baseline_MPRA_EnhCalls$EnhCall, Baseline_MPRA_EnhCalls[,ColumnsToTest[i]]))
+  temp_Enh_FisherTest <- fisher.test(temp_Enh_df)
+  
+  temp_rowNames <- rownames(Enh_OddsRatio_pvalue)
+  Enh_OddsRatio_pvalue <- rbind(Enh_OddsRatio_pvalue, c(temp_Enh_FisherTest$estimate, temp_Enh_FisherTest$conf.int, temp_Enh_FisherTest$p.value))
+  rownames(Enh_OddsRatio_pvalue) <- c(temp_rowNames, ColumnsToTest[i])
+}
+colnames(Enh_OddsRatio_pvalue) <- c("Odds_Ratio", "Odds_Ratio_Lower", "Odds_Ratio_Higher", "pvalue")
+Enh_OddsRatio_pvalue$pvalue <- p.adjust(Enh_OddsRatio_pvalue$pvalue, method = "fdr")
+Enh_OddsRatio_pvalue <- Enh_OddsRatio_pvalue[order(Enh_OddsRatio_pvalue$Odds_Ratio, decreasing = T),]
+Enh_OddsRatio_pvalue$Color <- "black"
+Enh_OddsRatio_pvalue$Color[which(Enh_OddsRatio_pvalue$pvalue<0.01)] <- "red"
+
+# barplot of Fisher's exact test
+x <- barplot(Enh_OddsRatio_pvalue$Odds_Ratio, names=rownames(Enh_OddsRatio_pvalue), col = Enh_OddsRatio_pvalue$Color, cex.names=1.5, cex.axis=2, cex.lab=0.5,
+             ylim=c(0, max(Enh_OddsRatio_pvalue$Odds_Ratio_Higher)+0.25), main="Enrichment at Enhancers")
+segments(x, Enh_OddsRatio_pvalue$Odds_Ratio_Lower, 
+         x, Enh_OddsRatio_pvalue$Odds_Ratio_Higher, lwd = 1.5)
+arrows(x, Enh_OddsRatio_pvalue$Odds_Ratio_Lower, 
+       x, Enh_OddsRatio_pvalue$Odds_Ratio_Higher, 
+       lwd = 1.5, angle = 90, code = 3, length = 0.05)
+text(x, y=Enh_OddsRatio_pvalue$Odds_Ratio_Higher+0.1, labels = signif(Enh_OddsRatio_pvalue$pvalue, digits = 3), col="blue", cex = 1.5)
+abline(h=1)
+
+# Resetting EnhancerCalls_All_Allelic_Annotated 
+Baseline_MPRA_EnhCalls <- temp_df; rm(temp_df)
+```
+
+
+
+Format to run t.tests
+```{r}
+# Read Sequence Annotations and format
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
+
+# Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
+Unique_SNPs <- unique(Sequence.SnpID.CHR.START_Annotations$SNP_ID)
+Sequence.SnpID.CHR.START_Annotations_2 <- Sequence.SnpID.CHR.START_Annotations[which(Sequence.SnpID.CHR.START_Annotations$SEQUENCE %in% c(paste(Unique_SNPs, "A", sep="_"), paste(Unique_SNPs, "B", sep="_")) ),]
+SNPs_With_2_Sequences_annotations <- unique(Sequence.SnpID.CHR.START_Annotations_2[,-1])
+
+SNPs_With_2_Sequences_cts <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_annotations))
+{
+  Sequence_IDs <- Sequence.SnpID.CHR.START_Annotations_2$SEQUENCE[which(Sequence.SnpID.CHR.START_Annotations_2$SNP_ID %in% SNPs_With_2_Sequences_annotations$SNP_ID[i])]
+  TEST_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID[i],
+                   substring(Sequence_IDs[1], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2),
+                   substring(Sequence_IDs[2], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2), sep="_")
+  temp_cts <- c(dds_counts[which(rownames(dds_counts) %in% Sequence_IDs[1]),], 
+                dds_counts[which(rownames(dds_counts) %in% Sequence_IDs[2]),])
+  temp_row_names <- rownames(SNPs_With_2_Sequences_cts)
+  SNPs_With_2_Sequences_cts <- rbind(SNPs_With_2_Sequences_cts, temp_cts) # Count DF
+  rownames(SNPs_With_2_Sequences_cts) <- c(temp_row_names, as.character(TEST_ID))
+}
+# SNPs with 2 sequences only
+colnames(SNPs_With_2_Sequences_cts) <- c(paste(rep("Plasmid_REF_R", NumReplicates), 1:NumReplicates, sep = ""), paste(rep("RNA_REF_R", NumReplicates), 1:NumReplicates, sep = ""), 
+                                         paste(rep("Plasmid_ALT_R", NumReplicates), 1:NumReplicates, sep = ""), paste(rep("RNA_ALT_R", NumReplicates), 1:NumReplicates, sep = ""))
+# Sanity checks
+nrow(SNPs_With_2_Sequences_cts)==nrow(SNPs_With_2_Sequences_annotations)
+nrow(SNPs_With_2_Sequences_cts) == sum((rownames(SNPs_With_2_Sequences_cts) == paste(SNPs_With_2_Sequences_annotations$SNP_ID, "_A_B", sep=""))*1)
+
+# Normalizing by Plasmid replicates (mean)
+SNPs_With_2_Sequences_cts_norm <- cbind(log2(SNPs_With_2_Sequences_cts[, paste(rep("RNA_REF_R", NumReplicates), 1:NumReplicates, sep = "")]/rowMeans(SNPs_With_2_Sequences_cts[, paste(rep("Plasmid_REF_R", NumReplicates), 1:NumReplicates, sep = "")])), 
+                                        log2(SNPs_With_2_Sequences_cts[, paste(rep("RNA_ALT_R", NumReplicates), 1:NumReplicates, sep = "")]/rowMeans(SNPs_With_2_Sequences_cts[, paste(rep("Plasmid_ALT_R", NumReplicates), 1:NumReplicates, sep = "")]))) # Normalize to plasmid count (log2FC)
+```
+
+
+t.test for allelic skew
+```{r}
+statistic_pvalue_df <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_cts_norm))
+{
+  temp_df <- data.frame(as.numeric(SNPs_With_2_Sequences_cts_norm[i,paste(rep("RNA_REF_R", NumReplicates), 1:NumReplicates, sep = "")]), as.numeric(SNPs_With_2_Sequences_cts_norm[i,paste(rep("RNA_ALT_R", NumReplicates), 1:NumReplicates,sep = "")]))
+  names(temp_df) <- c("REF", "ALT")
+  avgExp <- mean(c(temp_df$REF, temp_df$ALT))
+  logFC <- mean(temp_df$ALT-temp_df$REF)
+  x <- tryCatch(t.test(temp_df$REF, temp_df$ALT, var.equal=FALSE, paired=TRUE)$statistic, error=function(x) NA )
+  y <- tryCatch(t.test(temp_df$REF, temp_df$ALT, var.equal=FALSE, paired=TRUE)$p.value, error=function(x) NA )
+  statistic_pvalue_df <- rbind(statistic_pvalue_df, c(avgExp, logFC, x,y))
+}
+# Sanity check
+nrow(statistic_pvalue_df) == nrow(SNPs_With_2_Sequences_cts_norm)
+# Row and column names
+colnames(statistic_pvalue_df) <- c("Baseline_AvgExp", "Baseline_LogFC", "Baseline_t-statistic", "Baseline_pvalue")
+rownames(statistic_pvalue_df) <- rownames(SNPs_With_2_Sequences_cts_norm)
+
+```
+
+# Correct for multiple testing
+```{r}
+# Merge 'MPRA activity' calls and 'allelic skew' calls
+temp <- merge(Baseline_MPRA_EnhCalls, statistic_pvalue_df,
+              by.x = "SNP_ID", by.y = 0)
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated <- temp; rm(temp)
+
+# Correct for multiple testing
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$Baseline_p.adj <- -1
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated_tmp <- Baseline_MPRA_EnhCalls_AllelicSkew_Annotated[which(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$EnhCall==1),]
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Baseline_p.adj <- p.adjust(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Baseline_pvalue, method = "BH")
+for(i in 1:nrow(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated))
+{
+  if(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$SNP_ID[i] %in% Baseline_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$SNP_ID)
+  {
+    FDR_Value <- Baseline_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Baseline_p.adj[which(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$SNP_ID %in% Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$SNP_ID[i])]
+    if(length(FDR_Value) == 1)
+    {
+      Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$Baseline_p.adj[i] <- FDR_Value
+    }
+  }
+}
+```
+
+
+# Format Columns and write
+```{r}
+caQTL_Columns <- c("caQTL", "caQTL_TestTogether", "LucOrAssociatedToT2D")
+NonCaQTL_Columns <- c("non_caQTL_00", "non_caQTL_01", "non_caQTL_10", "non_caQTL_11", "NegativeControls_950_Random", "NegativeControls_Stimulus_REs")
+T2D_Columns <- c("T2D_AssociatedDeletions", "T2D_AssociatedInsertions", "T2D_AssociatedSNPs_TestIndividually", "T2D_AssociatedSNPs_TestTogether")
+
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$caQTLsss <- (rowSums(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated[, caQTL_Columns])>0)*1
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$NONcaQTs <- (rowSums(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated[, NonCaQTL_Columns])>0)*1
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated$T2D_Associated <- (rowSums(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated[, T2D_Columns])>0)*1
+
+Baseline_MPRA_EnhCalls_AllelicSkew_Annotated <- Baseline_MPRA_EnhCalls_AllelicSkew_Annotated[, c("SNP_ID", "CHR", "START", "chr_start", "caQTLsss", "NONcaQTs", "T2D_Associated", ColumnsToTest,
+                                                                                               c(paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "REF", sep = "_"), 
+                                                                                                 paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "ALT", sep = "_")),
+                                                                                               "Baseline_AvgExp", "Baseline_LogFC", "Baseline_t-statistic", "Baseline_pvalue", "Baseline_p.adj")]
+
+colnames(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated) <- c("SNP_ID", "CHR", "START", "chr_start", "caQTLsss", "NONcaQTs", "T2D_Associated", ColumnsToTest,
+                                                                                               c(paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "Baseline_REF", sep = "_"), 
+                                                                                                 paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "Baseline_ALT", sep = "_")),
+                                                                                               "Baseline_AllelicSkew_AvgExp", "Baseline_AllelicSkew_LogFC", "Baseline_AllelicSkew_t-statistic", "Baseline_AllelicSkew_pvalue", "Baseline_AllelicSkew_p.adj")
+
+write.table(Baseline_MPRA_EnhCalls_AllelicSkew_Annotated, file = "./Output_Files/Baseline_MPRA_EnhCalls_AllelicSkew_Annotated.txt", 
+            col.names = T, row.names = F, quote = F, sep = "\t")
+```
+

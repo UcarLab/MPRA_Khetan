@@ -1,0 +1,567 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+# Needs to be changed according to user #
+
+path <- "~/Desktop/Lab/MPRA_MIN6/CompiledCode/"
+
+# Needs to be changed according to user #
+```
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath(path)) 
+```
+
+
+# Homer motifs enriched at MPRA active elements harboring T2D-associated SNPs
+```{r}
+library(ggplot2); library(ggrepel)
+qvalue_cutoff <- 0.01
+
+# Read HOMER Files
+T2D_Enhancers_HOMER <- read.table("./Output_Files/HOMER/T2D_Associated_Enhancers/knownResults.txt", skip=1)
+colnames(T2D_Enhancers_HOMER) <- paste("DMSO", c("Motif", "Consensus", "pvalue", "-log10(pvalue)", "qvalue", "NumTarget", "PercTarget", "NumBackground", "PercBackground"), sep="_") 
+
+# Calculate log2FC 
+T2D_Enhancers_HOMER$DMSO_Log2Enrichment <- log2(as.numeric(sub("%", "", T2D_Enhancers_HOMER$DMSO_PercTarget))/as.numeric(sub("%", "", T2D_Enhancers_HOMER$DMSO_PercBackground)))
+
+# Merge and filter
+homerMotifsResults <- T2D_Enhancers_HOMER[is.finite(T2D_Enhancers_HOMER$DMSO_Log2Enrichment),]
+
+# Colour 
+homerMotifsResults$Colour <- "yellow"
+homerMotifsResults$Colour[which(homerMotifsResults$DMSO_qvalue > qvalue_cutoff)] <- "red"
+
+homerMotifsResults$labels <- gsub("\\s*\\([^\\)]+\\)","",gsub("/.*$","", homerMotifsResults$DMSO_Motif))
+homerMotifsResults$Proxy <- -1*homerMotifsResults$`DMSO_-log10(pvalue)`
+
+ggplot(homerMotifsResults, aes(x=DMSO_Log2Enrichment, y=Proxy, colour = factor(Colour))) + geom_point() + xlab("log2(Enrichment)") + ylab("-log10(pvalue)") +
+  scale_color_manual(values=c("yellow", "red")) + theme_bw(base_size = 24) + theme(legend.position = "bottom") + theme(aspect.ratio=1) +
+  geom_text_repel(data = subset(homerMotifsResults, (DMSO_Log2Enrichment>2 & Proxy>7)), aes(label = labels), size = 6, box.padding = unit(0.5, "lines"), point.padding = unit(0.5, "lines"), colour = "black")
+```
+
+
+# Number of T2D SNPs with allelic skew VS tested
+```{r}
+############################### Read Master Table
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Baseline_FDR_Binarized <- (MasterTable$Baseline_AllelicSkew_p.adj < 0.10 & MasterTable$Baseline_AllelicSkew_p.adj > 0)*1
+MasterTable$DMSO_FDR_Binarized <- (MasterTable$DMSO_AllelicSkew_p.adj < 0.10 & MasterTable$DMSO_AllelicSkew_p.adj > 0)*1
+MasterTable$TG_FDR_Binarized <- (MasterTable$TG_AllelicSkew_p.adj < 0.10 & MasterTable$TG_AllelicSkew_p.adj > 0)*1
+MasterTable$AllelicSkew_AnyCondition <- (MasterTable$Baseline_FDR_Binarized==1 | MasterTable$DMSO_FDR_Binarized==1 | MasterTable$TG_FDR_Binarized==1)*1
+
+############################### Read T2D-associated SNPs table
+T2D_SNPs_Index <- read.table("./Reference_Files/T2D_AssociatedSNPs_Index.txt", header = T)
+T2D_SNPs_Index$SNP_ID <- paste(T2D_SNPs_Index$SNP, "A_B", sep = "_")
+T2D_SNPs_Index <- T2D_SNPs_Index[,c("SNP_ID", "AssociatedIndexSNP")]
+
+# Merge
+temp <- merge(MasterTable, T2D_SNPs_Index, by = "SNP_ID")
+MasterTable <- temp; rm(temp)
+
+# Index SNPs
+Index_SNPs <- unique(MasterTable$AssociatedIndexSNP)
+
+# Obtain Statistics for each loci / index SNP
+Index_SNPs_Counts <- data.frame()
+colNames_ToSumOver <- c("Baseline_FDR_Binarized", "DMSO_FDR_Binarized", "TG_FDR_Binarized")
+
+for(i in 1:length(Index_SNPs))
+{
+  # Select to obtain statistics
+  temp_df <- unique(MasterTable[which(MasterTable$AssociatedIndexSNP %in% Index_SNPs[i]),])
+  NumSNPstested <- nrow(temp_df)
+  Index_SNPs_Counts <- rbind(Index_SNPs_Counts,
+                             c(NumSNPstested, sum(temp_df$AllelicSkew_AnyCondition)))
+}
+Index_SNPs_Counts.tmp <- cbind(Index_SNPs, Index_SNPs_Counts)
+Index_SNPs_Counts <- Index_SNPs_Counts.tmp; rm(Index_SNPs_Counts.tmp)
+colnames(Index_SNPs_Counts) <- c("IndexSNP", "NumSNPstested", "AllelicSkew_cts")
+
+# Filter SNPs that dropped off
+Index_SNPs_Counts <- Index_SNPs_Counts[which(Index_SNPs_Counts$NumSNPstested > 0),]
+
+# Number of Loci where at least 1 SNP was tested
+nrow(Index_SNPs_Counts[which(Index_SNPs_Counts$NumSNPstested > 0),])
+
+# Number of Loci where at least 1 SNP showed some sort of an allelic skew
+Index_SNPs_Counts$AllelicSkew_Binary <- (Index_SNPs_Counts$AllelicSkew_cts>0)*1
+sum(Index_SNPs_Counts$AllelicSkew_Binary)
+
+# Number of SNPs tested versus Number of SNPs showing allelic skew
+set.seed(9837)
+Index_SNPs_Counts$log2NumSNPstested <- log2(Index_SNPs_Counts$NumSNPstested)
+plot(jitter(AllelicSkew_cts, 1) ~ jitter(log2NumSNPstested, 15), Index_SNPs_Counts, col = AllelicSkew_cts,
+     xlab="log2(# SNPs tested)", ylab="# SNPs showing Allelic skew", type = "p", pch=19, cex=1)
+points(jitter(Index_SNPs_Counts$log2NumSNPstested[which(Index_SNPs_Counts$AllelicSkew_cts==0)], 20),
+       jitter(rep(0, times = sum((Index_SNPs_Counts$AllelicSkew_cts==0)*1) ), 15), 
+       col="yellow", type = "p", pch=19, cex=1)
+```
+
+
+# Number of SNPs with allelic skew AND ER stress 
+```{r}
+############################### Read Master Table
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Baseline_FDR_Binarized <- (MasterTable$Baseline_AllelicSkew_p.adj < 0.10 & MasterTable$Baseline_AllelicSkew_p.adj > 0)*1
+MasterTable$DMSO_FDR_Binarized <- (MasterTable$DMSO_AllelicSkew_p.adj < 0.10 & MasterTable$DMSO_AllelicSkew_p.adj > 0)*1
+MasterTable$TG_FDR_Binarized <- (MasterTable$TG_AllelicSkew_p.adj < 0.10 & MasterTable$TG_AllelicSkew_p.adj > 0)*1
+MasterTable$AllelicSkew_AnyCondition <- (MasterTable$Baseline_FDR_Binarized==1 | MasterTable$DMSO_FDR_Binarized==1 | MasterTable$TG_FDR_Binarized==1)*1
+MasterTable <- MasterTable[which(MasterTable$AllelicSkew_AnyCondition==1),]
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$NONcaQTs==1)] <- 0
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$T2D_Associated==1)] <- 0
+MasterTable$NONcaQTs[which(MasterTable$NONcaQTs==1 & MasterTable$T2D_Associated==1)] <- 0
+
+# EnhancerActivity_Modulated_TG
+SNPsWith_Decreased_EnhancerActivity_TG <- MasterTable$SNP_ID[which( (MasterTable$REF_DMSO_TG_EnhCall == -1 | MasterTable$ALT_DMSO_TG_EnhCall == -1) & (MasterTable$REF_DMSO_TG_EnhCall != 1 & MasterTable$ALT_DMSO_TG_EnhCall != 1) )]
+SNPsWith_Increased_EnhancerActivity_TG <- MasterTable$SNP_ID[which( (MasterTable$REF_DMSO_TG_EnhCall == 1 | MasterTable$ALT_DMSO_TG_EnhCall == 1) & (MasterTable$REF_DMSO_TG_EnhCall != -1 & MasterTable$ALT_DMSO_TG_EnhCall != -1) )]
+MasterTable$EnhancerActivity_Modulated_TG <- (MasterTable$SNP_ID %in% SNPsWith_Decreased_EnhancerActivity_TG)*-1 + (MasterTable$SNP_ID %in% SNPsWith_Increased_EnhancerActivity_TG)*1
+table(MasterTable$EnhancerActivity_Modulated_TG)
+
+# Tables
+Table_caQTL <- table(MasterTable[, c("caQTLsss", "EnhancerActivity_Modulated_TG")])
+Table_NONcaQTs <- table(MasterTable[, c("NONcaQTs", "EnhancerActivity_Modulated_TG")])
+Table_T2D_Associated <- table(MasterTable[ c("T2D_Associated", "EnhancerActivity_Modulated_TG")])
+
+# Decrease in Enhancer activity with TG
+Decrease_caQTL <- fisher.test(Table_caQTL[,c("0", "-1")])
+Decrease_NONcaQTs <- fisher.test(Table_NONcaQTs[,c("0", "-1")])
+Decrease_T2D_Associated <- fisher.test(Table_T2D_Associated[,c("0", "-1")])                    
+
+# Increase in Enhancer activity with TG
+Increase_caQTL <- fisher.test(Table_caQTL[,c("0", "1")])
+Increase_NONcaQTs <- fisher.test(Table_NONcaQTs[,c("0", "1")])
+Increase_T2D_Associated <- fisher.test(Table_T2D_Associated[,c("0", "1")]) 
+
+OddsRatio_DF <- rbind("Decrease_caQTL" = Decrease_caQTL[c("estimate", "conf.int", "p.value")], 
+                      "Decrease_NONcaQTs" = Decrease_NONcaQTs[c("estimate", "conf.int", "p.value")], 
+                      "Decrease_T2D_Associated" = Decrease_T2D_Associated[c("estimate", "conf.int", "p.value")], 
+                      "Increase_caQTL" = Increase_caQTL[c("estimate", "conf.int", "p.value")], 
+                      "Increase_NONcaQTs" = Increase_NONcaQTs[c("estimate", "conf.int", "p.value")], 
+                      "Increase_T2D_Associated" = Increase_T2D_Associated[c("estimate", "conf.int", "p.value")])
+OddsRatio_DF <- data.frame(OddsRatio_DF)
+OddsRatio_DF$P.Adj <- p.adjust(OddsRatio_DF$p.value, method = "bonferroni")
+
+################################################################################# Are caQTLs/not-caQTLs/T2D-associated Loci enriched at "EnhancerActivity_Modulated_TG": Stacked Barplots
+StackedBarplot_DF <- data.frame()
+temp_df <- rbind(c(EnhancerCategory = "DecreasedActivity_TG", SNP_Category = "caQTLsss", value = sum(MasterTable$caQTLsss[which(MasterTable$EnhancerActivity_Modulated_TG == -1)])), 
+      c(EnhancerCategory = "DecreasedActivity_TG", SNP_Category = "NONcaQTs", value = sum(MasterTable$NONcaQTs[which(MasterTable$EnhancerActivity_Modulated_TG == -1)])), 
+      c(EnhancerCategory = "DecreasedActivity_TG", SNP_Category = "T2D_Associated", value = sum(MasterTable$T2D_Associated[which(MasterTable$EnhancerActivity_Modulated_TG == -1)])), 
+      c(EnhancerCategory = "NoChangeActivity_TG", SNP_Category = "caQTLsss", value = sum(MasterTable$caQTLsss[which(MasterTable$EnhancerActivity_Modulated_TG == 0)])), 
+      c(EnhancerCategory = "NoChangeActivity_TG", SNP_Category = "NONcaQTs", value = sum(MasterTable$NONcaQTs[which(MasterTable$EnhancerActivity_Modulated_TG == 0)])), 
+      c(EnhancerCategory = "NoChangeActivity_TG", SNP_Category = "T2D_Associated", value = sum(MasterTable$T2D_Associated[which(MasterTable$EnhancerActivity_Modulated_TG == 0)])),
+      c(EnhancerCategory = "IncreasedActivity_TG", SNP_Category = "caQTLsss", value = sum(MasterTable$caQTLsss[which(MasterTable$EnhancerActivity_Modulated_TG == 1)])), 
+      c(EnhancerCategory = "IncreasedActivity_TG", SNP_Category = "NONcaQTs", value = sum(MasterTable$NONcaQTs[which(MasterTable$EnhancerActivity_Modulated_TG == 1)])), 
+      c(EnhancerCategory = "IncreasedActivity_TG", SNP_Category = "T2D_Associated", value = sum(MasterTable$T2D_Associated[which(MasterTable$EnhancerActivity_Modulated_TG == 1)])))
+StackedBarplot_DF <- rbind(StackedBarplot_DF, temp_df)
+colnames(StackedBarplot_DF) <- c("EnhancerCategory", "SNP_Category", "value")
+
+# Factor to Numeric
+StackedBarplot_DF$value <- as.numeric(levels(StackedBarplot_DF$value))[StackedBarplot_DF$value]
+
+# Obtains Fractions 
+StackedBarplot_DF$Fraction <- c(StackedBarplot_DF$value[which(StackedBarplot_DF$EnhancerCategory %in% "DecreasedActivity_TG")]/sum(StackedBarplot_DF$value[which(StackedBarplot_DF$EnhancerCategory %in% "DecreasedActivity_TG")]), 
+                                StackedBarplot_DF$value[which(StackedBarplot_DF$EnhancerCategory %in% "NoChangeActivity_TG")]/sum(StackedBarplot_DF$value[which(StackedBarplot_DF$EnhancerCategory %in% "NoChangeActivity_TG")]), 
+                                StackedBarplot_DF$value[which(StackedBarplot_DF$EnhancerCategory %in% "IncreasedActivity_TG")]/sum(StackedBarplot_DF$value[which(StackedBarplot_DF$EnhancerCategory %in% "IncreasedActivity_TG")]))
+
+# ggplot 
+StackedBarplot_DF$order <- rep(c(1, 2, 3), times=3)
+g <- ggplot(StackedBarplot_DF, aes(x=EnhancerCategory, y=Fraction, fill=reorder(SNP_Category, order))) + geom_bar(position="fill", stat="identity") + scale_fill_manual(values=c("caQTLsss"="#FF0000", "NONcaQTs"="#FACA00", "T2D_Associated"="#00B050")) + theme(axis.text.x=element_text(angle=90, hjust=1))
+print(g)
+
+OddsRatio_DF
+
+```
+
+# T2D SNPs & Repeats
+```{r}
+library(ggplot2); library(sm)
+
+# Out of 10,000 random genomic regions, 2195 overlapped SINEs
+
+# Read REPEAT Annotations for MPRA_Loci
+MPRA_Loci_Annotations <- read.table("./Reference_Files/RepeatMasker_hg19/MPRA_Loci_RepeatsAnnotated_WithColumnNames.bed", header=T)
+colSums(MPRA_Loci_Annotations[,5:ncol(MPRA_Loci_Annotations)])
+MPRA_Loci_Annotations <- MPRA_Loci_Annotations[,4:ncol(MPRA_Loci_Annotations)]
+MPRA_Loci_Annotations[,2:ncol(MPRA_Loci_Annotations)] <- (MPRA_Loci_Annotations[,2:ncol(MPRA_Loci_Annotations)]>0)*1
+MPRA_Loci_Annotations$SNP_ID <- paste(MPRA_Loci_Annotations$SNP, "A_B", sep = "_")
+
+############################### Read Master Table & Format
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Enhancer_AnyAllele_AnyCondition <- (MasterTable$EnhCall_Baseline_REF==1 | MasterTable$EnhCall_Baseline_ALT==1 | MasterTable$EnhCall_DMSO_REF==1 | MasterTable$EnhCall_DMSO_ALT==1 | MasterTable$EnhCall_TG_REF==1 | MasterTable$EnhCall_TG_ALT==1)*1
+MasterTable$Baseline_FDR_Binarized <- (MasterTable$Baseline_AllelicSkew_p.adj < 0.10 & MasterTable$Baseline_AllelicSkew_p.adj > 0)*1
+MasterTable$DMSO_FDR_Binarized <- (MasterTable$DMSO_AllelicSkew_p.adj < 0.10 & MasterTable$DMSO_AllelicSkew_p.adj > 0)*1
+MasterTable$TG_FDR_Binarized <- (MasterTable$TG_AllelicSkew_p.adj < 0.10 & MasterTable$TG_AllelicSkew_p.adj > 0)*1
+MasterTable$AllelicSkew_AnyCondition <- (MasterTable$Baseline_FDR_Binarized==1 | MasterTable$DMSO_FDR_Binarized==1 | MasterTable$TG_FDR_Binarized==1)*1
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$NONcaQTs==1)] <- 0
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$T2D_Associated==1)] <- 0
+MasterTable$NONcaQTs[which(MasterTable$NONcaQTs==1 & MasterTable$T2D_Associated==1)] <- 0
+
+# EnhancerActivity_Modulated_TG
+SNPsWith_Decreased_EnhancerActivity_TG <- MasterTable$SNP_ID[which( (MasterTable$REF_DMSO_TG_EnhCall == -1 | MasterTable$ALT_DMSO_TG_EnhCall == -1) & (MasterTable$REF_DMSO_TG_EnhCall != 1 & MasterTable$ALT_DMSO_TG_EnhCall != 1) )]
+SNPsWith_Increased_EnhancerActivity_TG <- MasterTable$SNP_ID[which( (MasterTable$REF_DMSO_TG_EnhCall == 1 | MasterTable$ALT_DMSO_TG_EnhCall == 1) & (MasterTable$REF_DMSO_TG_EnhCall != -1 & MasterTable$ALT_DMSO_TG_EnhCall != -1) )]
+MasterTable$EnhancerActivity_Modulated_TG <- (MasterTable$SNP_ID %in% SNPsWith_Decreased_EnhancerActivity_TG)*-1 + (MasterTable$SNP_ID %in% SNPsWith_Increased_EnhancerActivity_TG)*1
+table(MasterTable$EnhancerActivity_Modulated_TG)
+
+# Merge
+temp <- merge(MasterTable, MPRA_Loci_Annotations, by = "SNP_ID")
+SNP_Annotations_Repeats <- temp
+
+
+################# Do Repeat Elements affect enhancer probability?
+SINE.test <- fisher.test(table(SNP_Annotations_Repeats[, c("Enhancer_AnyAllele_AnyCondition", "SINE")]))
+LINE.test <- fisher.test(table(SNP_Annotations_Repeats[,c("Enhancer_AnyAllele_AnyCondition", "LINE")]))
+LTR.test <- fisher.test(table(SNP_Annotations_Repeats[,c("Enhancer_AnyAllele_AnyCondition", "LTR")])) # Make Barplots
+OddsRatio_pvalue <- data.frame()
+OddsRatio_pvalue <- rbind(c(LINE.test$estimate, LINE.test$conf.int, LINE.test$p.value), 
+                          c(LTR.test$estimate, LTR.test$conf.int, LTR.test$p.value), 
+                          c(SINE.test$estimate, SINE.test$conf.int, SINE.test$p.value))
+colnames(OddsRatio_pvalue) <- c("Odds_Ratio", "Odds_Ratio_Lower", "Odds_Ratio_Higher", "OddsRatio_pvalue")
+rownames(OddsRatio_pvalue) <- c("LINE", "LTR", "SINE")
+OddsRatio_pvalue <- as.data.frame(OddsRatio_pvalue)
+x <- barplot(OddsRatio_pvalue$Odds_Ratio, names=rownames(OddsRatio_pvalue), cex.names=1, cex.axis=2, cex.lab=1,
+             ylim=c(0, max(OddsRatio_pvalue$Odds_Ratio_Higher)+0.5), ylab="Odds Ratio")
+segments(x, OddsRatio_pvalue$Odds_Ratio_Lower, 
+         x, OddsRatio_pvalue$Odds_Ratio_Higher, lwd = 1.5)
+arrows(x, OddsRatio_pvalue$Odds_Ratio_Lower, 
+       x, OddsRatio_pvalue$Odds_Ratio_Higher, 
+       lwd = 1.5, angle = 90, code = 3, length = 0.05)
+
+#################  Proportion of Repeats in caQTLs / not-caQTLs / T2D
+SNP_Annotations_Repeats$Interaction_caQTL_control_T2D <- interaction(SNP_Annotations_Repeats$caQTLsss,
+                                                                     SNP_Annotations_Repeats$NONcaQTs,
+                                                                     SNP_Annotations_Repeats$T2D_Associated)
+SNP_Annotations_Repeats$Interaction_caQTL_control_T2D <- droplevels(SNP_Annotations_Repeats$Interaction_caQTL_control_T2D)
+Tablle_Interaction_caQTL_control_T2D_SINEs <- table(SNP_Annotations_Repeats[, c("Interaction_caQTL_control_T2D", "SINE")])
+fisher.test(Tablle_Interaction_caQTL_control_T2D_SINEs[c("1.0.0", "0.1.0"),]) # caQTL - control
+fisher.test(Tablle_Interaction_caQTL_control_T2D_SINEs[c("1.0.0", "0.0.1"),]) # caQTL - T2D
+fisher.test(Tablle_Interaction_caQTL_control_T2D_SINEs[c("0.1.0", "0.0.1"),]) # Control - T2D
+barplot(Tablle_Interaction_caQTL_control_T2D_SINEs[,2]/(Tablle_Interaction_caQTL_control_T2D_SINEs[,1] + Tablle_Interaction_caQTL_control_T2D_SINEs[,2]), 
+        ylim=c(0, 0.22), names=c("caQTLs", "controls", "T2D-associated"), ylab = "Proportion of SINE Repeats", col = c("red", "yellow", "green"))
+
+# Included Random Regions
+Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom <- rbind(Random = c(7805, 2195), Tablle_Interaction_caQTL_control_T2D_SINEs)
+barplot(Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom[,2]/(Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom[,1] + Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom[,2]), 
+        ylim=c(0, 0.30), names=c("Random", "caQTLs", "controls", "T2D-associated"), ylab = "Proportion of SINE Repeats", col = c("black", "red", "yellow", "green"))
+fisher.test(Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom[c("Random", "1.0.0"),]) # Random - caQTL
+fisher.test(Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom[c("Random", "0.1.0"),]) # Random - control
+fisher.test(Tablle_Interaction_caQTL_control_T2D_SINEs_PlusRandom[c("Random", "0.0.1"),]) # Random - T2D
+
+# Stacked barplot
+Distribution_DF <- as.data.frame(cbind(c("caQTLs", "controls", "T2D-associated"), 
+                                       Tablle_Interaction_caQTL_control_T2D_SINEs[,2]))
+colnames(Distribution_DF) <- c("Names", "Numbers")
+Distribution_DF$Numbers <- as.numeric(levels(Distribution_DF$Numbers))[Distribution_DF$Numbers]
+Distribution_DF$Fraction <- Distribution_DF$Numbers/sum(Distribution_DF$Numbers)
+Distribution_DF$Activity <- 1
+g <- ggplot(Distribution_DF, aes(x=Activity, y=Fraction, fill=Names)) + geom_bar(position="fill", stat="identity") + 
+  scale_fill_manual(values=c("caQTLs"="#FF0000", "controls"="#FACA00", "T2D-associated"="#00B050")) + theme(axis.text.x=element_text(angle=90, hjust=1)) 
+print(g)
+
+################## Proportion of Repeats in Higher stress
+SNP_Annotations_Repeats$Stress_Higher <- (SNP_Annotations_Repeats$EnhancerActivity_Modulated_TG==1)*1
+SNP_Annotations_Repeats$Interaction_caQTL_control_T2D_Stress_Higher <- interaction(SNP_Annotations_Repeats$caQTLsss,
+                                                                                   SNP_Annotations_Repeats$NONcaQTs,
+                                                                                   SNP_Annotations_Repeats$T2D_Associated,
+                                                                                   SNP_Annotations_Repeats$AllelicSkew_AnyCondition,
+                                                                                   SNP_Annotations_Repeats$Stress_Higher)
+SNP_Annotations_Repeats$Interaction_caQTL_control_T2D_Stress_Higher <- droplevels(SNP_Annotations_Repeats$Interaction_caQTL_control_T2D_Stress_Higher)
+temp_Table_Interaction_caQTL_control_T2D_Stress_Higher <- table(SNP_Annotations_Repeats[, c("Interaction_caQTL_control_T2D_Stress_Higher", "SINE")])
+
+fisher.test(temp_Table_Interaction_caQTL_control_T2D_Stress_Higher[c("1.0.0.0.1", "0.0.1.0.1"),])
+fisher.test(temp_Table_Interaction_caQTL_control_T2D_Stress_Higher[c("0.1.0.0.1", "0.0.1.0.1"),])
+
+fisher.test(temp_Table_Interaction_caQTL_control_T2D_Stress_Higher[c("1.0.0.1.1", "0.0.1.1.1"),])
+fisher.test(temp_Table_Interaction_caQTL_control_T2D_Stress_Higher[c("0.1.0.1.1", "0.0.1.1.1"),])
+
+################## Proportion of Repeats in T2D
+fisher.test(table(SNP_Annotations_Repeats[which(SNP_Annotations_Repeats$T2D_Associated==1), c("Enhancer_AnyAllele_AnyCondition", "SINE")]))
+fisher.test(table(SNP_Annotations_Repeats[which(SNP_Annotations_Repeats$T2D_Associated==1 & SNP_Annotations_Repeats$Enhancer_AnyAllele_AnyCondition==1), c("AllelicSkew_AnyCondition", "SINE")]))
+fisher.test(table(SNP_Annotations_Repeats[which(SNP_Annotations_Repeats$T2D_Associated==1 & SNP_Annotations_Repeats$Enhancer_AnyAllele_AnyCondition==1 & SNP_Annotations_Repeats$AllelicSkew_AnyCondition==1), c("Stress_Higher", "SINE")]))
+
+# T2D-Interaction (Select!!!)
+SNP_Annotations_Repeats <- SNP_Annotations_Repeats[which(SNP_Annotations_Repeats$T2D_Associated==1),]
+SNP_Annotations_Repeats$Interaction_T2D <- interaction(SNP_Annotations_Repeats$Enhancer_AnyAllele_AnyCondition, 
+                                                       SNP_Annotations_Repeats$AllelicSkew_AnyCondition,
+                                                       SNP_Annotations_Repeats$Stress_Higher)
+SNP_Annotations_Repeats <- SNP_Annotations_Repeats[which(SNP_Annotations_Repeats$Interaction_T2D != "0.0.1"),]
+SNP_Annotations_Repeats$Interaction_T2D <- droplevels(SNP_Annotations_Repeats$Interaction_T2D)
+Table_T2D <- table(SNP_Annotations_Repeats[,c("Interaction_T2D", "SINE")])
+barplot(Table_T2D[,2]/(Table_T2D[,1] + Table_T2D[,2]), 
+        ylim=c(0,1), ylab = "Proportion of SINES")
+a <- fisher.test(Table_T2D[c("0.0.0", "1.0.0"),])$p.value
+b <- fisher.test(Table_T2D[c("0.0.0", "1.1.0"),])$p.value
+c <- fisher.test(Table_T2D[c("0.0.0", "1.0.1"),])$p.value
+d <- fisher.test(Table_T2D[c("0.0.0", "1.1.1"),])$p.value
+
+e <- fisher.test(Table_T2D[c("1.0.0", "1.1.0"),])$p.value
+f <- fisher.test(Table_T2D[c("1.0.0", "1.0.1"),])$p.value
+g <- fisher.test(Table_T2D[c("1.0.0", "1.1.1"),])$p.value
+
+h <- fisher.test(Table_T2D[c("1.1.0", "1.0.1"),])$p.value
+i <- fisher.test(Table_T2D[c("1.1.0", "1.1.1"),])$p.value
+
+j <- fisher.test(Table_T2D[c("1.0.1", "1.1.1"),])$p.value
+
+```
+
+# T2D & Conservation
+```{r}
+############################### Read Master Table & Format
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Enhancer_AnyAllele_AnyCondition <- (MasterTable$EnhCall_Baseline_REF==1 | MasterTable$EnhCall_Baseline_ALT==1 | MasterTable$EnhCall_DMSO_REF==1 | MasterTable$EnhCall_DMSO_ALT==1 | MasterTable$EnhCall_TG_REF==1 | MasterTable$EnhCall_TG_ALT==1)*1
+MasterTable$Baseline_FDR_Binarized <- (MasterTable$Baseline_AllelicSkew_p.adj < 0.10 & MasterTable$Baseline_AllelicSkew_p.adj > 0)*1
+MasterTable$DMSO_FDR_Binarized <- (MasterTable$DMSO_AllelicSkew_p.adj < 0.10 & MasterTable$DMSO_AllelicSkew_p.adj > 0)*1
+MasterTable$TG_FDR_Binarized <- (MasterTable$TG_AllelicSkew_p.adj < 0.10 & MasterTable$TG_AllelicSkew_p.adj > 0)*1
+MasterTable$AllelicSkew_AnyCondition <- (MasterTable$Baseline_FDR_Binarized==1 | MasterTable$DMSO_FDR_Binarized==1 | MasterTable$TG_FDR_Binarized==1)*1
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$NONcaQTs==1)] <- 0
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$T2D_Associated==1)] <- 0
+MasterTable$NONcaQTs[which(MasterTable$NONcaQTs==1 & MasterTable$T2D_Associated==1)] <- 0
+MasterTable$Interaction_caQTL_Control_T2D <- interaction(MasterTable$caQTLsss,
+                                                         MasterTable$NONcaQTs,
+                                                         MasterTable$T2D_Associated)
+
+# EnhancerActivity_Modulated_TG
+SNPsWith_Decreased_EnhancerActivity_TG <- MasterTable$SNP_ID[which( (MasterTable$REF_DMSO_TG_EnhCall == -1 | MasterTable$ALT_DMSO_TG_EnhCall == -1) & (MasterTable$REF_DMSO_TG_EnhCall != 1 & MasterTable$ALT_DMSO_TG_EnhCall != 1) )]
+SNPsWith_Increased_EnhancerActivity_TG <- MasterTable$SNP_ID[which( (MasterTable$REF_DMSO_TG_EnhCall == 1 | MasterTable$ALT_DMSO_TG_EnhCall == 1) & (MasterTable$REF_DMSO_TG_EnhCall != -1 & MasterTable$ALT_DMSO_TG_EnhCall != -1) )]
+MasterTable$EnhancerActivity_Modulated_TG <- (MasterTable$SNP_ID %in% SNPsWith_Decreased_EnhancerActivity_TG)*-1 + (MasterTable$SNP_ID %in% SNPsWith_Increased_EnhancerActivity_TG)*1
+table(MasterTable$EnhancerActivity_Modulated_TG)
+
+# Annotate MasterTable
+  # Cow
+  MasterTable$Conservation_Cow <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Cow_BosTau7/MPRA_Loci_hg19_to_Cow_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Cow[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Chimp
+  MasterTable$Conservation_Chimp <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Chimp_PanTro6/MPRA_Loci_hg19_to_CHIMP_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Chimp[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Pig
+  MasterTable$Conservation_Pig <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Pig_susScr11/MPRA_Loci_hg19_to_Pig_susScr11_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Pig[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Rat
+  MasterTable$Conservation_Rat <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Rat_rn5/MPRA_Loci_hg19_to_Rat_rn5_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Rat[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Rhesus
+  MasterTable$Conservation_Rhesus <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Rhesus_rheMac8/MPRA_Loci_hg19_to_Rhesus_rheMac8_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Rhesus[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Mouse
+  MasterTable$Conservation_Mouse <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Human_to_Mouse/MPRA_Loci_hg19_to_mm9_Mapped_.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Mouse[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Dog
+  MasterTable$Conservation_Dog <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Dog_canFAM3/MPRA_Loci_hg19_to_Dog_canFAM3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Dog[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Cat
+  MasterTable$Conservation_Cat <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Cat_felCat5/MPRA_Loci_hg19_to_Cat_felCat5_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Cat[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Elephant
+  MasterTable$Conservation_Elephant <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Elephant_logAfr3/MPRA_Loci_hg19_to_Elephant_loxAfr3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Elephant[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Baboon
+  MasterTable$Conservation_Baboon <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Baboon_papAnu2/MPRA_Loci_hg19_to_Baboon_papAnu2_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Baboon[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # CrabEatingMacaque
+  MasterTable$Conservation_CrabEatingMacaque <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/CrabEatingMacaque_macFas5/MPRA_Loci_hg19_to_CrabEatingMacaque_macFas5_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_CrabEatingMacaque[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Gibbbon
+  MasterTable$Conservation_Gibbbon <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Gibbon_nomLeu3/MPRA_Loci_hg19_to_Gibbon_nomLeu3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Gibbbon[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Gorilla
+  MasterTable$Conservation_Gorilla <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Gorilla_gorGor3/MPRA_Loci_hg19_to_Gorilla_gorGor3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Gorilla[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Horse
+  MasterTable$Conservation_Horse <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Horse_equCab2/MPRA_Loci_hg19_to_Horse_equCab2_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Horse[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Marmoset
+  MasterTable$Conservation_Marmoset <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Marmoset_calJac3/MPRA_Loci_hg19_to_Marmoset_calJac3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Marmoset[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Orangutan
+  MasterTable$Conservation_Orangutan <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Orangutan/MPRA_Loci_hg19_to_Orangutan_ponAbe2_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Orangutan[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Panda
+  MasterTable$Conservation_Panda <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Panda_aiMel1/MPRA_Loci_hg19_to_Panda_aiMel1_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Panda[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Pika
+  MasterTable$Conservation_Pika <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Pika_ochPri3/MPRA_Loci_hg19_to_Pika_ochPri3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Pika[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Platypus
+  MasterTable$Conservation_Platypus <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Platypus_ornAna1/MPRA_Loci_hg19_to_Platypus_ornAna1_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Platypus[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Rabbit
+  MasterTable$Conservation_Rabbit <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Rabbit_oryCun2/MPRA_Loci_hg19_to_Rabbit_oryCun2_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Rabbit[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Sheep
+  MasterTable$Conservation_Sheep <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Sheep_oviAri3/MPRA_Loci_hg19_to_Sheep_oviAri3_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Sheep[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Shrew
+  MasterTable$Conservation_Shrew <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Shrew_sorAra2/MPRA_Loci_hg19_to_Shrew_sorAra2_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Shrew[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # Squirrel
+  MasterTable$Conservation_Squirrel <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Squirrel_speTri2/MPRA_Loci_hg19_to_Squirrel_speTri2_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_Squirrel[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # SquirrelMonkey
+  MasterTable$Conservation_SquirrelMonkey <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/SquirrelMonkey_saiBol1/MPRA_Loci_hg19_to_SquirrelMonkey_saiBol1_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_SquirrelMonkey[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # WhiteRhinoceros
+  MasterTable$Conservation_WhiteRhinoceros <- 0
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/WhiteRhinoceros/MPRA_Loci_hg19_to_WhiteRhinoceros_cerSim1_Mapped_0.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation_WhiteRhinoceros[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+
+###################################################################################################################################################### 
+Conservation_Species <- paste("Conservation", c("Cow", "Pig", "Rat", "Mouse", "Shrew", "Pika", "Squirrel", "Sheep", "Dog", "Cat", "Elephant", "Rabbit", "Horse", "Orangutan", "Panda", "Baboon", "Gorilla", "Gibbbon", "Rhesus", "Chimp"), sep="_")
+OddsRatio_pvalue_AllelicSkew <- data.frame()
+OddsRatio_pvalue_Interaction_caQTL_Control_T2D <- data.frame()
+
+for(i in 1:length(Conservation_Species))
+{
+  # T2D & stress
+  temp_Table_Stress <- table(MasterTable[which(MasterTable$AllelicSkew_AnyCondition==1 & MasterTable$T2D_Associated==1), c(Conservation_Species[i], "EnhancerActivity_Modulated_TG")])
+  
+  ProbConserved_Higher <- temp_Table_Stress[2,3]/sum(temp_Table_Stress[,3])
+  ProbConserved_NoChange <- temp_Table_Stress[2,2]/sum(temp_Table_Stress[,2])
+  ProbConserved_Lower <- temp_Table_Stress[2,1]/sum(temp_Table_Stress[,1])
+  
+  TestResult_AllelicSkew_Higher <- fisher.test(temp_Table_Stress[,2:3]) # Higher
+  TestResult_AllelicSkew_Lower <- fisher.test(temp_Table_Stress[,2:1]) # Lower
+  
+  temp_vec <- c(TestResult_AllelicSkew_Higher$estimate, TestResult_AllelicSkew_Higher$conf.int, TestResult_AllelicSkew_Higher$p.value, ProbConserved_Higher,
+                TestResult_AllelicSkew_Lower$estimate, TestResult_AllelicSkew_Lower$conf.int, TestResult_AllelicSkew_Lower$p.value,  ProbConserved_Lower, ProbConserved_NoChange)
+  
+  names(temp_vec) <- c(paste("Stress_Higher", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), "ProbConserved_Higher", 
+                       paste("Stress_Lower", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), "ProbConserved_Lower", "ProbConserved_NoChange")
+  
+  OddsRatio_pvalue_AllelicSkew <- rbind(OddsRatio_pvalue_AllelicSkew,
+                                        temp_vec)
+  
+  # Interaction: caQTL_Control_T2D
+  MasterTable_temp <- MasterTable[which(! (MasterTable$T2D_Associated==1 & MasterTable$EnhancerActivity_Modulated_TG==-1) ),]
+  MasterTable_temp <- MasterTable[which(! (MasterTable$T2D_Associated==1 & MasterTable$EnhancerActivity_Modulated_TG==1) ),]
+  temp_Table <- table(MasterTable_temp[which(MasterTable_temp$AllelicSkew_AnyCondition==1), c(Conservation_Species[i], "Interaction_caQTL_Control_T2D")])
+  
+  ProbConserved_caQTL <- temp_Table[2, c("1.0.0")]/sum(temp_Table[, c("1.0.0")])
+  ProbConserved_control <- temp_Table[2, c("0.1.0")]/sum(temp_Table[, c("0.1.0")])
+  ProbConserved_T2D <- temp_Table[2, c("0.0.1")]/sum(temp_Table[, c("0.0.1")])
+  
+  TestResult_caQTL_control <- fisher.test(temp_Table[, c("1.0.0", "0.1.0")]) 
+  TestResult_caQTL_T2D <- fisher.test(temp_Table[, c("1.0.0", "0.0.1")]) 
+  TestResult_control_T2D <- fisher.test(temp_Table[, c("0.1.0", "0.0.1")]) 
+  
+  temp_vec <- c(ProbConserved_caQTL, ProbConserved_control, ProbConserved_T2D, 
+                TestResult_caQTL_control$estimate, TestResult_caQTL_control$conf.int, TestResult_caQTL_control$p.value, 
+                TestResult_caQTL_T2D$estimate, TestResult_caQTL_T2D$conf.int, TestResult_caQTL_T2D$p.value, 
+                TestResult_control_T2D$estimate, TestResult_control_T2D$conf.int, TestResult_control_T2D$p.value)
+  
+  names(temp_vec) <- c("ProbConserved_caQTL", "ProbConserved_control", "ProbConserved_T2D", 
+                        paste("caQTL_control", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), 
+                        paste("caQTL_T2D", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), 
+                        paste("control_T2D", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"))
+  
+  OddsRatio_pvalue_Interaction_caQTL_Control_T2D <- rbind(OddsRatio_pvalue_Interaction_caQTL_Control_T2D, temp_vec)
+}
+rownames(OddsRatio_pvalue_Interaction_caQTL_Control_T2D) <- Conservation_Species
+rownames(OddsRatio_pvalue_AllelicSkew) <- Conservation_Species
+colnames(OddsRatio_pvalue_Interaction_caQTL_Control_T2D) <- c("ProbConserved_caQTL", "ProbConserved_control", "ProbConserved_T2D", 
+                                                              paste("caQTL_control", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), 
+                                                              paste("caQTL_T2D", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), 
+                                                              paste("control_T2D", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"))
+colnames(OddsRatio_pvalue_AllelicSkew) <- c(paste("Stress_Higher", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), "ProbConserved_Higher", 
+                                            paste("Stress_Lower", c("estimate", "Conf_1", "Conf_2", "p.value"), sep="_"), "ProbConserved_Lower", "ProbConserved_NoChange")
+
+# Adjust for multiple testing (OddsRatio_pvalue_AllelicSkew)
+OddsRatio_pvalue_AllelicSkew$Stress_Higher_p.value.adj <- p.adjust(OddsRatio_pvalue_AllelicSkew$Stress_Higher_p.value, method = "fdr")
+OddsRatio_pvalue_AllelicSkew$Stress_Lower_p.value.adj <- p.adjust(OddsRatio_pvalue_AllelicSkew$Stress_Lower_p.value, method = "fdr")
+# Subset & Order (OddsRatio_pvalue_AllelicSkew)
+OddsRatio_pvalue_AllelicSkew <- OddsRatio_pvalue_AllelicSkew[order(OddsRatio_pvalue_AllelicSkew$ProbConserved_Higher, decreasing = F),]
+
+# Adjust for multiple testing (OddsRatio_pvalue_Interaction_caQTL_Control_T2D)
+OddsRatio_pvalue_Interaction_caQTL_Control_T2D$caQTL_control_p.value.adj <- p.adjust(OddsRatio_pvalue_Interaction_caQTL_Control_T2D$caQTL_control_p.value, method = "fdr")
+OddsRatio_pvalue_Interaction_caQTL_Control_T2D$caQTL_T2D_p.value.adj <- p.adjust(OddsRatio_pvalue_Interaction_caQTL_Control_T2D$caQTL_T2D_p.value, method = "fdr")
+OddsRatio_pvalue_Interaction_caQTL_Control_T2D$control_T2D_p.value.adj <- p.adjust(OddsRatio_pvalue_Interaction_caQTL_Control_T2D$control_T2D_p.value, method = "fdr")
+# Subset & Order (OddsRatio_pvalue_Interaction_caQTL_Control_T2D)
+OddsRatio_pvalue_Interaction_caQTL_Control_T2D <- OddsRatio_pvalue_Interaction_caQTL_Control_T2D[order(OddsRatio_pvalue_Interaction_caQTL_Control_T2D$ProbConserved_T2D),]
+
+# Merge
+temp <- merge(OddsRatio_pvalue_Interaction_caQTL_Control_T2D, 
+              OddsRatio_pvalue_AllelicSkew, 
+              by=0)
+OddsRatio_pvalue_df <- temp
+
+# Subset & Order (OddsRatio_pvalue_df)
+OddsRatio_pvalue_df <- OddsRatio_pvalue_df[order(OddsRatio_pvalue_df$ProbConserved_T2D, decreasing = F),]
+
+# Plot
+plot(OddsRatio_pvalue_df$ProbConserved_caQTL, 
+              xlab="Species", ylab="Probability of SNPs with Allelic Skew being conserved", ylim=c(0, 1.0), pch=19, type="b", col="red")
+points(OddsRatio_pvalue_df$ProbConserved_control, 
+       ylim=c(0, 1.0), pch=19, type="b", col="yellow")
+points(OddsRatio_pvalue_df$ProbConserved_NoChange, 
+       ylim=c(0, 1.0), pch=19, type="b", col="black")
+points(OddsRatio_pvalue_df$ProbConserved_Higher, 
+       ylim=c(0, 1.0), pch=19, type="b", col="purple")
+
+OddsRatio_pvalue_df
+OddsRatio_pvalue_df[,c("Row.names", "caQTL_control_p.value.adj", "caQTL_T2D_p.value.adj", "control_T2D_p.value.adj", "Stress_Higher_p.value.adj")]
+
+```
+
+
+
+
+
+
+
+

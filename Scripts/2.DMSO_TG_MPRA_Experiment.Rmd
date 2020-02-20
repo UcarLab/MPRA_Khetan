@@ -1,0 +1,582 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+# Needs to be changed according to user #
+
+path <- "~/Desktop/Lab/MPRA_MIN6/CompiledCode/"
+
+# Needs to be changed according to user #
+```
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath(path)) 
+```
+
+# QC
+```{r}
+library(pheatmap); library(ggplot2); library(DESeq2); library(ggrepel)
+################################################################# Global Variables
+Cutoff_Value <- 0.01
+NumReplicates <- 5
+
+################################################################## Read data 
+data <- read.table("./Reference_Files/Read_Count_Matrices/MIN6_MPRA_DMSO_TG_FinalMatrix.out", row.names = 1) # Reading MPRA Combined matrix
+colnames(data) <- c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5") # Annotating samples
+
+################################################################# QC
+# Correlation Heatmap
+CorrelationMatrix_pearson <- matrix(nrow=ncol(data),ncol=ncol(data))
+CorrelationMatrix_spearman <- matrix(nrow=ncol(data),ncol=ncol(data))
+for(i in 1:ncol(data)){
+  for(j in 1:ncol(data)){
+    CorrelationMatrix_pearson[i,j] <- cor(data[,i],data[,j],method="pearson")
+    CorrelationMatrix_spearman[i,j] <- cor(data[,i],data[,j],method="spearman")}}
+colnames(CorrelationMatrix_pearson)<-as.vector(colnames(data)); colnames(CorrelationMatrix_spearman)<-as.vector(colnames(data))
+rownames(CorrelationMatrix_pearson)<-as.vector(colnames(data)); rownames(CorrelationMatrix_spearman)<-as.vector(colnames(data))
+pheatmap(CorrelationMatrix_pearson,cluster_rows=TRUE,cluster_cols=TRUE,
+         show_rownames=TRUE,show_colnames=TRUE,display_numbers=TRUE,main="R (pearson)", fontsize = 18)
+pheatmap(CorrelationMatrix_spearman,cluster_rows=TRUE,cluster_cols=TRUE,
+         show_rownames=TRUE,show_colnames=TRUE,display_numbers=TRUE,main="R (spearman)", fontsize = 18)
+
+# PCA
+y_pca_all <- prcomp(data, center=TRUE, scale.=TRUE)
+PCA_Matrix <- data.frame(y_pca_all$rotation)
+# Plotting PCA
+a <- ggplot(data.frame(y_pca_all$rotation), aes(x=PC1, y=PC2, label=rownames(PCA_Matrix))) + geom_point(color = c(rep("red", times=5), rep("blue", times=5), rep("black", times=5)), size=2) + ggtitle("PCA (All)") + 
+  xlab(paste("PC1 [",summary(y_pca_all)$importance[2,1]*100,"% Variance Explained]")) + ylab(paste("PC2 [",summary(y_pca_all)$importance[2,2]*100,"% Variance Explained]")) +
+  theme(text=element_text(size=24)) + geom_text_repel(size = 8, box.padding = unit(0.5, "lines"), point.padding = unit(0.35, "lines"), colour = "black")
+print(a)
+```
+
+
+# Read Annotations for elements tested (generated from Script 1)
+```{r}
+# Read Sequence Annotations and format
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
+
+# Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
+Unique_SNPs <- unique(Sequence.SnpID.CHR.START_Annotations$SNP_ID)
+Sequence.SnpID.CHR.START_Annotations_2 <- Sequence.SnpID.CHR.START_Annotations[which(Sequence.SnpID.CHR.START_Annotations$SEQUENCE %in% c(paste(Unique_SNPs, "A", sep="_"), paste(Unique_SNPs, "B", sep="_")) ),]
+SNPs_With_2_Sequences_annotations <- unique(Sequence.SnpID.CHR.START_Annotations_2[,-1])
+```
+
+
+# Subset data according to tests
+```{r}
+data_Plasmid_DMSO <- data[,c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5") ]
+data_Plasmid_TG <- data[,c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5") ]
+data_DMSO_TG <- data[,c("DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5") ]
+```
+
+
+# Run DESeq2 (MPRA activity; Allelic skew; DMSO only)
+```{r}
+################################################################## MPRA Activity
+# Format files to run DESeq2 
+condition <- relevel(as.factor(c(rep("Plasmid", NumReplicates), rep("DMSO", NumReplicates))), ref = "Plasmid")
+colData <- data.frame(row.names=as.character(1:(NumReplicates*2)), condition=condition)
+colnames(data_Plasmid_DMSO) <- rownames(colData)
+
+# Run DESeq2
+dds <- DESeqDataSetFromMatrix(countData=data_Plasmid_DMSO, colData=colData, design=~condition)
+dds_results <- DESeq(dds, fitType='local')
+
+# DESeq2 output
+dds_results_EnhCalls_DMSO_df <- data.frame(results(dds_results))
+dds_results_EnhCalls_DMSO_df$EnhCall <- (dds_results_EnhCalls_DMSO_df$padj<Cutoff_Value & dds_results_EnhCalls_DMSO_df$log2FoldChange>0)*1 
+table(dds_results_EnhCalls_DMSO_df$EnhCall)
+colnames(dds_results_EnhCalls_DMSO_df) <- paste("Plasmid_DMSO", colnames(dds_results_EnhCalls_DMSO_df), sep="_")
+
+# Obtain normalized read counts from DESeq2
+dds_counts <- counts(dds_results, normalized=TRUE)
+colnames(dds_counts) <- c(paste("Plasmid_R", 1:NumReplicates, sep=""), paste("RNA_R", 1:NumReplicates, sep=""))
+
+# Annotate dds_counts with enhancer calls
+dds_counts_EnhCalls_df <- merge(dds_counts, dds_results_EnhCalls_DMSO_df, by=0, all.x=TRUE)
+rownames(dds_counts_EnhCalls_df) <- dds_counts_EnhCalls_df[,1]; dds_counts_EnhCalls_df <- dds_counts_EnhCalls_df[,-1]
+
+################################################################### Obtain MPRA activity per loci
+SNPs_With_2_Sequences_cts <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_annotations))
+{
+  Sequence_IDs <- Sequence.SnpID.CHR.START_Annotations_2$SEQUENCE[which(Sequence.SnpID.CHR.START_Annotations_2$SNP_ID %in% SNPs_With_2_Sequences_annotations$SNP_ID[i])]
+  TEST_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID[i],
+                   substring(Sequence_IDs[1], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2),
+                   substring(Sequence_IDs[2], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2), sep="_")
+  temp_cts <- c(dds_counts_EnhCalls_df[which(rownames(dds_counts_EnhCalls_df) %in% Sequence_IDs[1]), ], 
+                dds_counts_EnhCalls_df[which(rownames(dds_counts_EnhCalls_df) %in% Sequence_IDs[2]),])
+  temp_row_names <- rownames(SNPs_With_2_Sequences_cts)
+  SNPs_With_2_Sequences_cts <- rbind(SNPs_With_2_Sequences_cts, temp_cts) # Count DF
+  rownames(SNPs_With_2_Sequences_cts) <- c(temp_row_names, as.character(TEST_ID))
+}
+# SNPs with 2 sequences only
+colnames(SNPs_With_2_Sequences_cts) <- c(paste("REF", colnames(dds_counts_EnhCalls_df), sep = "_"), 
+                                         paste("ALT", colnames(dds_counts_EnhCalls_df), sep = "_"))
+
+# Sanity checks
+nrow(SNPs_With_2_Sequences_cts)==nrow(SNPs_With_2_Sequences_annotations)
+nrow(SNPs_With_2_Sequences_cts) == sum((rownames(SNPs_With_2_Sequences_cts) == paste(SNPs_With_2_Sequences_annotations$SNP_ID, "_A_B", sep=""))*1)
+
+################################################################## t.test for allelic skew
+# Normalizing by Plasmid replicates (mean)
+SNPs_With_2_Sequences_cts_norm <- cbind(log2(SNPs_With_2_Sequences_cts[, paste(rep("REF_RNA_R", NumReplicates), 1:NumReplicates, sep = "")]/rowMeans(SNPs_With_2_Sequences_cts[, paste(rep("REF_Plasmid_R", NumReplicates), 1:NumReplicates, sep = "")])), 
+                                        log2(SNPs_With_2_Sequences_cts[, paste(rep("ALT_RNA_R", NumReplicates), 1:NumReplicates, sep = "")]/rowMeans(SNPs_With_2_Sequences_cts[, paste(rep("ALT_Plasmid_R", NumReplicates), 1:NumReplicates, sep = "")]))) # Normalize to plasmid count (log2FC)
+
+# Perform t.tests
+statistic_pvalue_df <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_cts_norm))
+{
+  temp_df <- data.frame(as.numeric(SNPs_With_2_Sequences_cts_norm[i,paste(rep("REF_RNA_R", NumReplicates), 1:NumReplicates, sep = "")]), as.numeric(SNPs_With_2_Sequences_cts_norm[i,paste(rep("ALT_RNA_R", NumReplicates), 1:NumReplicates,sep = "")]))
+  names(temp_df) <- c("REF", "ALT")
+  avgExp <- mean(c(temp_df$REF, temp_df$ALT))
+  logFC <- mean(temp_df$ALT-temp_df$REF)
+  x <- tryCatch(t.test(temp_df$REF, temp_df$ALT, var.equal=FALSE, paired=TRUE)$statistic, error=function(x) NA )
+  y <- tryCatch(t.test(temp_df$REF, temp_df$ALT, var.equal=FALSE, paired=TRUE)$p.value, error=function(x) NA )
+  statistic_pvalue_df <- rbind(statistic_pvalue_df, c(avgExp, logFC, x,y))
+}
+# Sanity check
+nrow(statistic_pvalue_df) == nrow(SNPs_With_2_Sequences_cts_norm)
+# Row and column names
+colnames(statistic_pvalue_df) <- c("DMSO_ALlelicSkew_AvgExp", "DMSO_ALlelicSkew_LogFC", "DMSO_ALlelicSkew_t-statistic", "DMSO_ALlelicSkew_pvalue")
+rownames(statistic_pvalue_df) <- rownames(SNPs_With_2_Sequences_cts_norm)
+
+################################################################## Merge 'MPRA activity' calls and 'allelic skew' calls
+temp <- merge(SNPs_With_2_Sequences_cts, statistic_pvalue_df,
+              by = 0)
+DMSO_MPRA_EnhCalls_AllelicSkew_Annotated <- temp; rm(temp)
+
+################################################################### Correct for multiple testing
+DMSO_MPRA_EnhCalls_AllelicSkew_Annotated$DMSO_p.adj <- -1
+DMSO_MPRA_EnhCalls_AllelicSkew_Annotated_tmp <- DMSO_MPRA_EnhCalls_AllelicSkew_Annotated[which(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated$REF_Plasmid_DMSO_EnhCall==1 | DMSO_MPRA_EnhCalls_AllelicSkew_Annotated$ALT_Plasmid_DMSO_EnhCall==1 ),]
+DMSO_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$DMSO_p.adj <- p.adjust(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$DMSO_ALlelicSkew_pvalue, method = "BH")
+for(i in 1:nrow(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated))
+{
+  if(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated$Row.names[i] %in% DMSO_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Row.names)
+  {
+    FDR_Value <- DMSO_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$DMSO_p.adj[which(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Row.names %in% DMSO_MPRA_EnhCalls_AllelicSkew_Annotated$Row.names[i])]
+    if(length(FDR_Value) == 1)
+    {
+      DMSO_MPRA_EnhCalls_AllelicSkew_Annotated$DMSO_p.adj[i] <- FDR_Value
+    }
+  }
+}
+
+# Format Columns & write
+DMSO_MPRA_EnhCalls_AllelicSkew_Annotated <- DMSO_MPRA_EnhCalls_AllelicSkew_Annotated[,c("Row.names", "REF_Plasmid_DMSO_baseMean", "REF_Plasmid_DMSO_log2FoldChange", "REF_Plasmid_DMSO_pvalue", "REF_Plasmid_DMSO_padj", "REF_Plasmid_DMSO_EnhCall",
+                                                                                        "ALT_Plasmid_DMSO_baseMean", "ALT_Plasmid_DMSO_log2FoldChange", "ALT_Plasmid_DMSO_pvalue", "ALT_Plasmid_DMSO_padj", "ALT_Plasmid_DMSO_EnhCall",
+                                                                                        "DMSO_ALlelicSkew_AvgExp", "DMSO_ALlelicSkew_LogFC", "DMSO_ALlelicSkew_t-statistic", "DMSO_ALlelicSkew_pvalue", "DMSO_p.adj")]
+
+colnames(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated) <- c("SNP_ID", paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "DMSO_REF", sep = "_"), 
+                                                                  paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "DMSO_ALT", sep = "_"),
+                                                                  "DMSO_AllelicSkew_AvgExp", "DMSO_AllelicSkew_LogFC", "DMSO_AllelicSkew_t-statistic", "DMSO_AllelicSkew_pvalue", "DMSO_AllelicSkew_p.adj")
+
+write.table(DMSO_MPRA_EnhCalls_AllelicSkew_Annotated, file = "./Output_Files/DMSO_MPRA_EnhCalls_AllelicSkew.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+```
+
+
+# Run DESeq2 (MPRA activity; TG)
+```{r}
+# Format files to run DESeq2 
+condition <- relevel(as.factor(c(rep("Plasmid", NumReplicates), rep("TG", NumReplicates))), ref = "Plasmid")
+colData <- data.frame(row.names=as.character(1:(NumReplicates*2)), condition=condition)
+colnames(data_Plasmid_TG) <- rownames(colData)
+
+# Run DESeq2
+dds <- DESeqDataSetFromMatrix(countData=data_Plasmid_TG, colData=colData, design=~condition)
+dds_results <- DESeq(dds, fitType='local')
+
+# DESeq2 output
+dds_results_EnhCalls_TG_df <- data.frame(results(dds_results))
+dds_results_EnhCalls_TG_df$EnhCall <- (dds_results_EnhCalls_TG_df$padj<Cutoff_Value & dds_results_EnhCalls_TG_df$log2FoldChange>0)*1 
+table(dds_results_EnhCalls_TG_df$EnhCall)
+colnames(dds_results_EnhCalls_TG_df) <- paste("Plasmid_TG", colnames(dds_results_EnhCalls_TG_df), sep="_")
+
+# Obtain normalized read counts from DESeq2
+dds_counts <- counts(dds_results, normalized=TRUE)
+colnames(dds_counts) <- c(paste("Plasmid_R", 1:NumReplicates, sep=""), paste("RNA_R", 1:NumReplicates, sep=""))
+
+# Annotate dds_counts with enhancer calls
+dds_counts_EnhCalls_df <- merge(dds_counts, dds_results_EnhCalls_TG_df, by=0, all.x=TRUE)
+rownames(dds_counts_EnhCalls_df) <- dds_counts_EnhCalls_df[,1]; dds_counts_EnhCalls_df <- dds_counts_EnhCalls_df[,-1]
+
+################################################################### Obtain MPRA activity per loci
+SNPs_With_2_Sequences_cts <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_annotations))
+{
+  Sequence_IDs <- Sequence.SnpID.CHR.START_Annotations_2$SEQUENCE[which(Sequence.SnpID.CHR.START_Annotations_2$SNP_ID %in% SNPs_With_2_Sequences_annotations$SNP_ID[i])]
+  TEST_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID[i],
+                   substring(Sequence_IDs[1], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2),
+                   substring(Sequence_IDs[2], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2), sep="_")
+  temp_cts <- c(dds_counts_EnhCalls_df[which(rownames(dds_counts_EnhCalls_df) %in% Sequence_IDs[1]), ], 
+                dds_counts_EnhCalls_df[which(rownames(dds_counts_EnhCalls_df) %in% Sequence_IDs[2]),])
+  temp_row_names <- rownames(SNPs_With_2_Sequences_cts)
+  SNPs_With_2_Sequences_cts <- rbind(SNPs_With_2_Sequences_cts, temp_cts) # Count DF
+  rownames(SNPs_With_2_Sequences_cts) <- c(temp_row_names, as.character(TEST_ID))
+}
+# SNPs with 2 sequences only
+colnames(SNPs_With_2_Sequences_cts) <- c(paste("REF", colnames(dds_counts_EnhCalls_df), sep = "_"), 
+                                         paste("ALT", colnames(dds_counts_EnhCalls_df), sep = "_"))
+
+# Sanity checks
+nrow(SNPs_With_2_Sequences_cts)==nrow(SNPs_With_2_Sequences_annotations)
+nrow(SNPs_With_2_Sequences_cts) == sum((rownames(SNPs_With_2_Sequences_cts) == paste(SNPs_With_2_Sequences_annotations$SNP_ID, "_A_B", sep=""))*1)
+
+################################################################## t.test for allelic skew
+# Normalizing by Plasmid replicates (mean)
+SNPs_With_2_Sequences_cts_norm <- cbind(log2(SNPs_With_2_Sequences_cts[, paste(rep("REF_RNA_R", NumReplicates), 1:NumReplicates, sep = "")]/rowMeans(SNPs_With_2_Sequences_cts[, paste(rep("REF_Plasmid_R", NumReplicates), 1:NumReplicates, sep = "")])), 
+                                        log2(SNPs_With_2_Sequences_cts[, paste(rep("ALT_RNA_R", NumReplicates), 1:NumReplicates, sep = "")]/rowMeans(SNPs_With_2_Sequences_cts[, paste(rep("ALT_Plasmid_R", NumReplicates), 1:NumReplicates, sep = "")]))) # Normalize to plasmid count (log2FC)
+
+# Perform t.tests
+statistic_pvalue_df <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_cts_norm))
+{
+  temp_df <- data.frame(as.numeric(SNPs_With_2_Sequences_cts_norm[i,paste(rep("REF_RNA_R", NumReplicates), 1:NumReplicates, sep = "")]), as.numeric(SNPs_With_2_Sequences_cts_norm[i,paste(rep("ALT_RNA_R", NumReplicates), 1:NumReplicates,sep = "")]))
+  names(temp_df) <- c("REF", "ALT")
+  avgExp <- mean(c(temp_df$REF, temp_df$ALT))
+  logFC <- mean(temp_df$ALT-temp_df$REF)
+  x <- tryCatch(t.test(temp_df$REF, temp_df$ALT, var.equal=FALSE, paired=TRUE)$statistic, error=function(x) NA )
+  y <- tryCatch(t.test(temp_df$REF, temp_df$ALT, var.equal=FALSE, paired=TRUE)$p.value, error=function(x) NA )
+  statistic_pvalue_df <- rbind(statistic_pvalue_df, c(avgExp, logFC, x,y))
+}
+# Sanity check
+nrow(statistic_pvalue_df) == nrow(SNPs_With_2_Sequences_cts_norm)
+# Row and column names
+colnames(statistic_pvalue_df) <- c("TG_ALlelicSkew_AvgExp", "TG_ALlelicSkew_LogFC", "TG_ALlelicSkew_t-statistic", "TG_ALlelicSkew_pvalue")
+rownames(statistic_pvalue_df) <- rownames(SNPs_With_2_Sequences_cts_norm)
+
+################################################################## Merge 'MPRA activity' calls and 'allelic skew' calls
+temp <- merge(SNPs_With_2_Sequences_cts, statistic_pvalue_df,
+              by = 0)
+TG_MPRA_EnhCalls_AllelicSkew_Annotated <- temp; rm(temp)
+
+################################################################### Correct for multiple testing
+TG_MPRA_EnhCalls_AllelicSkew_Annotated$TG_p.adj <- -1
+TG_MPRA_EnhCalls_AllelicSkew_Annotated_tmp <- TG_MPRA_EnhCalls_AllelicSkew_Annotated[which(TG_MPRA_EnhCalls_AllelicSkew_Annotated$REF_Plasmid_TG_EnhCall==1 | TG_MPRA_EnhCalls_AllelicSkew_Annotated$ALT_Plasmid_TG_EnhCall==1 ),]
+TG_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$TG_p.adj <- p.adjust(TG_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$TG_ALlelicSkew_pvalue, method = "BH")
+for(i in 1:nrow(TG_MPRA_EnhCalls_AllelicSkew_Annotated))
+{
+  if(TG_MPRA_EnhCalls_AllelicSkew_Annotated$Row.names[i] %in% TG_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Row.names)
+  {
+    FDR_Value <- TG_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$TG_p.adj[which(TG_MPRA_EnhCalls_AllelicSkew_Annotated_tmp$Row.names %in% TG_MPRA_EnhCalls_AllelicSkew_Annotated$Row.names[i])]
+    if(length(FDR_Value) == 1)
+    {
+      TG_MPRA_EnhCalls_AllelicSkew_Annotated$TG_p.adj[i] <- FDR_Value
+    }
+  }
+}
+
+# Format Columns & write
+TG_MPRA_EnhCalls_AllelicSkew_Annotated <- TG_MPRA_EnhCalls_AllelicSkew_Annotated[,c("Row.names", "REF_Plasmid_TG_baseMean", "REF_Plasmid_TG_log2FoldChange", "REF_Plasmid_TG_pvalue", "REF_Plasmid_TG_padj", "REF_Plasmid_TG_EnhCall",
+                                                                                        "ALT_Plasmid_TG_baseMean", "ALT_Plasmid_TG_log2FoldChange", "ALT_Plasmid_TG_pvalue", "ALT_Plasmid_TG_padj", "ALT_Plasmid_TG_EnhCall",
+                                                                                        "TG_ALlelicSkew_AvgExp", "TG_ALlelicSkew_LogFC", "TG_ALlelicSkew_t-statistic", "TG_ALlelicSkew_pvalue", "TG_p.adj")]
+
+colnames(TG_MPRA_EnhCalls_AllelicSkew_Annotated) <- c("SNP_ID", paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "TG_REF", sep = "_"), 
+                                                        paste(c("baseMean", "log2FoldChange", "pvalue", "padj", "EnhCall"), "TG_ALT", sep = "_"),
+                                                        "TG_AllelicSkew_AvgExp", "TG_AllelicSkew_LogFC", "TG_AllelicSkew_t-statistic", "TG_AllelicSkew_pvalue", "TG_AllelicSkew_p.adj")
+
+write.table(TG_MPRA_EnhCalls_AllelicSkew_Annotated, file = "./Output_Files/TG_MPRA_EnhCalls_AllelicSkew.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+```
+
+
+# Run DESeq2 (MPRA activity; DMSO-TG comparison)
+```{r}
+# Format files to run DESeq2 
+condition <- relevel(as.factor(c(rep("DMSO", NumReplicates), rep("TG", NumReplicates))), ref = "DMSO")
+colData <- data.frame(row.names=as.character(1:(NumReplicates*2)), condition=condition)
+colnames(data_DMSO_TG) <- rownames(colData)
+
+# Run DESeq2
+dds <- DESeqDataSetFromMatrix(countData=data_DMSO_TG, colData=colData, design=~condition)
+dds_results <- DESeq(dds, fitType='local')
+
+# DESeq2 output
+dds_results_EnhCalls_DMSO_TG_df <- data.frame(results(dds_results))
+dds_results_EnhCalls_DMSO_TG_df$EnhCall <- (dds_results_EnhCalls_DMSO_TG_df$padj<Cutoff_Value & dds_results_EnhCalls_DMSO_TG_df$log2FoldChange>0)*1 + (dds_results_EnhCalls_DMSO_TG_df$padj<Cutoff_Value & dds_results_EnhCalls_DMSO_TG_df$log2FoldChange<0)*-1
+table(dds_results_EnhCalls_DMSO_TG_df$EnhCall)
+colnames(dds_results_EnhCalls_DMSO_TG_df) <- paste("DMSO_TG", colnames(dds_results_EnhCalls_DMSO_TG_df), sep="_")
+
+################################################################### Obtain MPRA activity per loci
+SNPs_With_2_Sequences_cts <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_annotations))
+{
+  Sequence_IDs <- Sequence.SnpID.CHR.START_Annotations_2$SEQUENCE[which(Sequence.SnpID.CHR.START_Annotations_2$SNP_ID %in% SNPs_With_2_Sequences_annotations$SNP_ID[i])]
+  TEST_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID[i],
+                   substring(Sequence_IDs[1], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2),
+                   substring(Sequence_IDs[2], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2), sep="_")
+  temp_cts <- c(dds_results_EnhCalls_DMSO_TG_df[which(rownames(dds_results_EnhCalls_DMSO_TG_df) %in% Sequence_IDs[1]), ], 
+                dds_results_EnhCalls_DMSO_TG_df[which(rownames(dds_results_EnhCalls_DMSO_TG_df) %in% Sequence_IDs[2]),])
+  temp_row_names <- rownames(SNPs_With_2_Sequences_cts)
+  SNPs_With_2_Sequences_cts <- rbind(SNPs_With_2_Sequences_cts, temp_cts) # Count DF
+  rownames(SNPs_With_2_Sequences_cts) <- c(temp_row_names, as.character(TEST_ID))
+}
+# SNPs with 2 sequences only
+colnames(SNPs_With_2_Sequences_cts) <- c(paste("REF", colnames(dds_results_EnhCalls_DMSO_TG_df), sep = "_"), 
+                                         paste("ALT", colnames(dds_results_EnhCalls_DMSO_TG_df), sep = "_"))
+
+# Sanity checks
+nrow(SNPs_With_2_Sequences_cts)==nrow(SNPs_With_2_Sequences_annotations)
+nrow(SNPs_With_2_Sequences_cts) == sum((rownames(SNPs_With_2_Sequences_cts) == paste(SNPs_With_2_Sequences_annotations$SNP_ID, "_A_B", sep=""))*1)
+
+SNPs_With_2_Sequences_cts$SNP_ID <- rownames(SNPs_With_2_Sequences_cts)
+write.table(SNPs_With_2_Sequences_cts, file = "./Output_Files/DMSO_TG_DifferentialMPRAactivity_Calls.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+```
+
+
+# Merge DFs from Baseline & DMSO-TG experiments
+```{r}
+Baseline <- read.table("./Output_Files/Baseline_MPRA_EnhCalls_AllelicSkew_Annotated.txt", header = T)
+DMSO <- read.table("./Output_Files/DMSO_MPRA_EnhCalls_AllelicSkew.txt", header = T)
+TG <- read.table("./Output_Files/TG_MPRA_EnhCalls_AllelicSkew.txt", header = T)
+DMSO_TG <- read.table("./Output_Files/DMSO_TG_DifferentialMPRAactivity_Calls.txt", header = T)
+
+# Merge 
+temp1 <- merge(Baseline, DMSO, by = "SNP_ID")
+temp2 <- merge(temp1, TG, by = "SNP_ID")
+temp3 <- merge(temp2, DMSO_TG, by = "SNP_ID")
+
+MasterTable_MPRAactivity_AllelicSkew_AllConditions <- temp3; rm(temp1); rm(temp2); rm(temp3) 
+write.table(MasterTable_MPRAactivity_AllelicSkew_AllConditions, file = "./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", col.names = T, row.names = F, quote = F, sep = "\t")
+```
+
+
+# Heatmap for sequences with differential MPRA activity under ER stress
+```{r}
+################################################################# Read DMSO-TG MPRA data 
+data <- read.table("./Reference_Files/Read_Count_Matrices/MIN6_MPRA_DMSO_TG_FinalMatrix.out", row.names = 1) # Reading MPRA Combined matrix
+colnames(data) <- c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5") # Annotating samples
+
+################################################################ Run DESeq2 for Plasmid-DMSO-TG comparison 
+# Format files to run DESeq2 
+condition <- relevel(as.factor(c(rep("Plasmid", NumReplicates), rep("DMSO", NumReplicates), rep("TG", NumReplicates))), ref = "Plasmid")
+colData <- data.frame(row.names=as.character(1:(NumReplicates*3)), condition=condition)
+colnames(data) <- rownames(colData)
+
+# Run DESeq2
+dds <- DESeqDataSetFromMatrix(countData=data, colData=colData, design=~condition)
+dds_results <- DESeq(dds, fitType='local')
+
+# Obtain normalized read counts from DESeq2
+dds_counts <- counts(dds_results, normalized=TRUE)
+colnames(dds_counts) <- c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5")
+
+# Subset dds_counts: Include only Loci with differential enhancer activity between DMSO-TG
+dds_counts <- dds_counts[which(rownames(dds_counts) %in% rownames(dds_results_EnhCalls_DMSO_TG_df[which(dds_results_EnhCalls_DMSO_TG_df$DMSO_TG_EnhCall==1 | dds_results_EnhCalls_DMSO_TG_df$DMSO_TG_EnhCall==-1),])),]
+
+# Merge data
+temp <- merge(dds_counts, dds_results_EnhCalls_DMSO_TG_df, by=0)
+dds_counts_EnhCalls <- temp; rm(temp)
+
+# Annotate as MPRA active under DMSO/TG conditions
+dds_counts_EnhCalls$Plasmid_DMSO_EnhCall <- (dds_counts_EnhCalls$Row.names %in% rownames(dds_results_EnhCalls_DMSO_df[which(dds_results_EnhCalls_DMSO_df$Plasmid_DMSO_EnhCall == 1),]) )*1
+dds_counts_EnhCalls$Plasmid_TG_EnhCall <- (dds_counts_EnhCalls$Row.names %in% rownames(dds_results_EnhCalls_TG_df[which(dds_results_EnhCalls_TG_df$Plasmid_TG_EnhCall == 1),]) )*1
+
+###################################################################################################################################################
+# Complex Heatmap
+library(ComplexHeatmap); library(circlize); library(cluster)
+col_fun = colorRamp2(c(-2, 0, 2), c("blue", "yellow", "red"))
+col_fun(seq(-3, 3))
+
+# define heatmap df
+Heatmap_df <- dds_counts_EnhCalls[,c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5")]
+
+# define heatmap matrix
+Heatmap_mat <- t(as.matrix(scale(t(Heatmap_df), center = TRUE, scale = TRUE)))
+
+set.seed(89745)
+# Heatmap
+Heatmap(Heatmap_mat, km = 2,
+        clustering_method_rows = "median", row_dend_reorder = TRUE, clustering_distance_rows = "manhattan", cluster_columns = FALSE, show_row_names = FALSE, col = col_fun) + 
+        rowAnnotation(Calls=dds_counts_EnhCalls$DMSO_TG_EnhCall, col = list(Calls = c("1" = "red", "-1" = "blue"))) +
+        rowAnnotation(Calls=dds_counts_EnhCalls$Plasmid_DMSO_EnhCall, col = list(Calls = c("1" = "black", "0" = "white"))) + 
+        rowAnnotation(Calls=dds_counts_EnhCalls$Plasmid_TG_EnhCall, col = list(Calls = c("1" = "black", "0" = "white")))
+```
+
+
+
+
+```{r}
+library(ggplot2); library(ggrepel)
+qvalue_cutoff <- 0.00000001
+
+# Read HOMER Files
+DMSO_HOMER <- read.table("./Output_Files/HOMER/DMSO_TG/DMSO_TO_TG/knownResults.txt", skip=1)
+colnames(DMSO_HOMER) <- paste("DMSO", c("Motif", "Consensus", "pvalue", "-log10(pvalue)", "qvalue", "NumTarget", "PercTarget", "NumBackground", "PercBackground"), sep="_") 
+TG_HOMER <- read.table("./Output_Files/HOMER/DMSO_TG/TG_TO_DMSO/knownResults.txt", skip=1)
+colnames(TG_HOMER) <- paste("TG", c("Motif", "Consensus", "pvalue", "-log10(pvalue)", "qvalue", "NumTarget", "PercTarget", "NumBackground", "PercBackground"), sep="_") 
+
+# Calculate log2FC 
+DMSO_HOMER$DMSO_Log2Enrichment <- log2(as.numeric(sub("%", "", DMSO_HOMER$DMSO_PercTarget))/as.numeric(sub("%", "", DMSO_HOMER$DMSO_PercBackground)))
+TG_HOMER$TG_Log2Enrichment <- log2(as.numeric(sub("%", "", TG_HOMER$TG_PercTarget))/as.numeric(sub("%", "", TG_HOMER$TG_PercBackground)))
+
+# Merge and filter
+homerMotifsResults <- merge(DMSO_HOMER, TG_HOMER, by.x="DMSO_Motif", by.y="TG_Motif")
+homerMotifsResults <- homerMotifsResults[is.finite(homerMotifsResults$DMSO_Log2Enrichment),]
+homerMotifsResults <- homerMotifsResults[is.finite(homerMotifsResults$TG_Log2Enrichment),]
+
+# Colour 
+homerMotifsResults$Colour <- "yellow"
+homerMotifsResults$Colour[which(homerMotifsResults$DMSO_qvalue < qvalue_cutoff & homerMotifsResults$TG_qvalue < qvalue_cutoff)] <- "black"
+homerMotifsResults$Colour[which(homerMotifsResults$DMSO_qvalue < qvalue_cutoff & homerMotifsResults$TG_qvalue > qvalue_cutoff)] <- "blue"
+homerMotifsResults$Colour[which(homerMotifsResults$DMSO_qvalue > qvalue_cutoff & homerMotifsResults$TG_qvalue < qvalue_cutoff)] <- "red"
+
+# homerMotifsResults <- homerMotifsResults[which(homerMotifsResults$Colour != "yellow"),]
+# homerMotifsResults <- homerMotifsResults[which(homerMotifsResults$Colour %in% c("blue", "red")),]
+
+homerMotifsResults$labels <- gsub("\\s*\\([^\\)]+\\)","",gsub("/.*$","", homerMotifsResults$DMSO_Motif))
+
+ggplot(homerMotifsResults, aes(x=DMSO_Log2Enrichment, y=TG_Log2Enrichment, colour = factor(Colour))) + geom_point() + xlab("log2(Enrichment) DMSO") + ylab("log2(Enrichment) TG") +
+  scale_color_manual(values=c("blue", "red", "Yellow")) + theme_bw(base_size = 24) + theme(legend.position = "bottom") + theme(aspect.ratio=1) + xlim(-5,5) + ylim(-5,5) +
+  geom_text_repel(data = subset(homerMotifsResults, (Colour %in% c("blue", "red") &  (abs(DMSO_Log2Enrichment)>5 & abs(TG_Log2Enrichment)>3)) ), aes(label = labels), size = 6, box.padding = unit(0.5, "lines"), point.padding = unit(0.5, "lines"), colour = "black")
+
+ggplot(homerMotifsResults, aes(x=DMSO_Log2Enrichment, y=TG_Log2Enrichment, colour = factor(Colour))) + geom_point() + xlab("log2(Enrichment) DMSO") + ylab("log2(Enrichment) TG") +
+  scale_color_manual(values=c("blue", "red", "Yellow")) + theme_bw(base_size = 24) + theme(legend.position = "bottom") + theme(aspect.ratio=1) + xlim(-5,5) + ylim(-5,5) +
+  geom_text_repel(data = subset(homerMotifsResults, (Colour %in% c("blue", "red") & ((abs(DMSO_Log2Enrichment)>5 | abs(TG_Log2Enrichment)>3)))), aes(label = labels), size = 6, box.padding = unit(0.5, "lines"), point.padding = unit(0.5, "lines"), colour = "black")
+```
+
+
+# Compare direction of SNPs with allelic skew across conditions
+```{r}
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+AllelicSkew_FDR <- 0.10
+
+# Compare: Baseline & DMSO
+MasterTable_temp <- MasterTable[which(MasterTable$Baseline_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$Baseline_AllelicSkew_p.adj >0 & MasterTable$DMSO_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$DMSO_AllelicSkew_p.adj > 0),]
+plot(MasterTable_temp$Baseline_AllelicSkew_LogFC, MasterTable_temp$DMSO_AllelicSkew_LogFC, 
+     main=cor(MasterTable_temp$Baseline_AllelicSkew_LogFC, MasterTable_temp$DMSO_AllelicSkew_LogFC), xlim=c(-2,2), ylim=c(-2,2),
+     cex=0.5, pch=19, xlab="logFC (Baseline)", ylab="logFC (DMSO)", cex.lab=2, cex.axis=2)
+abline(h=0, col="red"); abline(v=0, col="red")
+
+# Compare: Baseline & TG
+MasterTable_temp <- MasterTable[which(MasterTable$Baseline_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$Baseline_AllelicSkew_p.adj >0 & MasterTable$TG_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$TG_AllelicSkew_p.adj > 0),]
+plot(MasterTable_temp$Baseline_AllelicSkew_LogFC, MasterTable_temp$TG_AllelicSkew_LogFC, 
+     main=cor(MasterTable_temp$Baseline_AllelicSkew_LogFC, MasterTable_temp$TG_AllelicSkew_LogFC), xlim=c(-2,2), ylim=c(-2,2),
+     cex=0.5, pch=19, xlab="logFC (Baseline)", ylab="logFC (TG)", cex.lab=2, cex.axis=2)
+abline(h=0, col="red"); abline(v=0, col="red")
+
+# Compare: DMSO & TG
+MasterTable_temp <- MasterTable[which(MasterTable$DMSO_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$DMSO_AllelicSkew_p.adj >0 & MasterTable$TG_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$TG_AllelicSkew_p.adj > 0),]
+plot(MasterTable_temp$DMSO_AllelicSkew_LogFC, MasterTable_temp$TG_AllelicSkew_LogFC, 
+     main=cor(MasterTable_temp$DMSO_AllelicSkew_LogFC, MasterTable_temp$TG_AllelicSkew_LogFC), xlim=c(-2,2), ylim=c(-2,2),
+     cex=0.5, pch=19, xlab="logFC (DMSO)", ylab="logFC (TG)", cex.lab=2, cex.axis=2)
+abline(h=0, col="red"); abline(v=0, col="red")
+
+```
+
+# Heatmap: Allelic Skew & ER stress
+```{r}
+library(pheatmap); library(ggplot2); library(DESeq2); library(ggrepel)
+################################################################# Global Variables
+Cutoff_Value <- 0.01
+NumReplicates <- 5
+################################################################## Read data 
+data <- read.table("./Reference_Files/Read_Count_Matrices/MIN6_MPRA_DMSO_TG_FinalMatrix.out", row.names = 1) # Reading MPRA Combined matrix
+colnames(data) <- c("Plasmid_R1", "Plasmid_R2", "Plasmid_R3", "Plasmid_R4", "Plasmid_R5", "DMSO_R1", "DMSO_R2", "DMSO_R3", "DMSO_R4", "DMSO_R5", "TG_R1", "TG_R2", "TG_R3", "TG_R4", "TG_R5") # Annotating samples
+
+################################################################ Run DESeq2 
+# Format files to run DESeq2 
+condition <- relevel(as.factor(c(rep("Plasmid", NumReplicates), rep("DMSO", NumReplicates), rep("TG", NumReplicates))), ref = "Plasmid")
+colData <- data.frame(row.names=as.character(1:(NumReplicates*3)), condition=condition)
+colnames(data) <- rownames(colData)
+
+# Run DESeq2
+dds <- DESeqDataSetFromMatrix(countData=data, colData=colData, design=~condition)
+dds_results <- DESeq(dds, fitType='local')
+
+# Obtain normalized read counts from DESeq2
+dds_counts <- counts(dds_results, normalized=TRUE)
+colnames(dds_counts) <- c(paste("Plasmid_R", 1:NumReplicates, sep=""), paste("DMSO_R", 1:NumReplicates, sep=""), paste("TG_R", 1:NumReplicates, sep=""))
+
+# RNA:DNA ratio
+temp <- dds_counts[,c(paste("DMSO_R", 1:NumReplicates, sep=""), paste("TG_R", 1:NumReplicates, sep=""))]/(rowMeans(dds_counts[,c(paste("Plasmid_R", 1:NumReplicates, sep=""))]))
+dds_counts <- temp; rm(temp)
+
+############################## Combine on a per loci basis
+# Read Sequence Annotations and format
+Sequence.SnpID.CHR.START_Annotations <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_Annotated.txt", header=TRUE)
+Sequence.SnpID.CHR.START_Annotations <- Sequence.SnpID.CHR.START_Annotations[order(Sequence.SnpID.CHR.START_Annotations$NumSeqsTested, decreasing = FALSE),]
+
+# Generate Read Counts Matrix (Number of Sequences Tested Per SNP == 2)
+Unique_SNPs <- unique(Sequence.SnpID.CHR.START_Annotations$SNP_ID)
+Sequence.SnpID.CHR.START_Annotations_2 <- Sequence.SnpID.CHR.START_Annotations[which(Sequence.SnpID.CHR.START_Annotations$SEQUENCE %in% c(paste(Unique_SNPs, "A", sep="_"), paste(Unique_SNPs, "B", sep="_")) ),]
+SNPs_With_2_Sequences_annotations <- unique(Sequence.SnpID.CHR.START_Annotations_2[,-1])
+
+# Generate Read Counts Matrix per loci
+Unique_SNPs <- unique(Sequence.SnpID.CHR.START_Annotations$SNP_ID)
+Sequence.SnpID.CHR.START_Annotations_2 <- Sequence.SnpID.CHR.START_Annotations[which(Sequence.SnpID.CHR.START_Annotations$SEQUENCE %in% c(paste(Unique_SNPs, "A", sep="_"), paste(Unique_SNPs, "B", sep="_")) ),]
+SNPs_With_2_Sequences_annotations <- unique(Sequence.SnpID.CHR.START_Annotations_2[,-1])
+SNPs_With_2_Sequences_cts <- data.frame()
+for(i in 1:nrow(SNPs_With_2_Sequences_annotations))
+{
+  Sequence_IDs <- Sequence.SnpID.CHR.START_Annotations_2$SEQUENCE[which(Sequence.SnpID.CHR.START_Annotations_2$SNP_ID %in% SNPs_With_2_Sequences_annotations$SNP_ID[i])]
+  TEST_ID <- paste(SNPs_With_2_Sequences_annotations$SNP_ID[i],
+                   substring(Sequence_IDs[1], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2),
+                   substring(Sequence_IDs[2], nchar(as.character(SNPs_With_2_Sequences_annotations$SNP_ID[i]))+2), sep="_")
+  temp_cts <- c(dds_counts[which(rownames(dds_counts) %in% Sequence_IDs[1]),], 
+                dds_counts[which(rownames(dds_counts) %in% Sequence_IDs[2]),])
+  temp_row_names <- rownames(SNPs_With_2_Sequences_cts)
+  SNPs_With_2_Sequences_cts <- rbind(SNPs_With_2_Sequences_cts, temp_cts) # Count DF
+  rownames(SNPs_With_2_Sequences_cts) <- c(temp_row_names, as.character(TEST_ID))
+}
+# SNPs with 2 sequences only
+colnames(SNPs_With_2_Sequences_cts) <- c(paste(rep("DMSO_REF_R", NumReplicates), 1:NumReplicates, sep = ""), paste(rep("TG_REF_R", NumReplicates), 1:NumReplicates, sep = ""),
+                                         paste(rep("DMSO_ALT_R", NumReplicates), 1:NumReplicates, sep = ""), paste(rep("TG_ALT_R", NumReplicates), 1:NumReplicates, sep = ""))
+SNPs_With_2_Sequences_cts <- SNPs_With_2_Sequences_cts[c(paste(rep("DMSO_REF_R", NumReplicates), 1:NumReplicates, sep = ""), paste(rep("DMSO_ALT_R", NumReplicates), 1:NumReplicates, sep = ""), 
+                                                         paste(rep("TG_REF_R", NumReplicates), 1:NumReplicates, sep = ""), paste(rep("TG_ALT_R", NumReplicates), 1:NumReplicates, sep = ""))]
+
+############################### Read Master Table
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Baseline_FDR_Binarized <- (MasterTable$Baseline_AllelicSkew_p.adj < 0.10 & MasterTable$Baseline_AllelicSkew_p.adj > 0)*1
+MasterTable$DMSO_FDR_Binarized <- (MasterTable$DMSO_AllelicSkew_p.adj < 0.10 & MasterTable$DMSO_AllelicSkew_p.adj > 0)*1
+MasterTable$TG_FDR_Binarized <- (MasterTable$TG_AllelicSkew_p.adj < 0.10 & MasterTable$TG_AllelicSkew_p.adj > 0)*1
+
+############################### Filter Master Table
+MasterTable <- MasterTable[which(MasterTable$DMSO_FDR_Binarized==1 | MasterTable$TG_FDR_Binarized==1),]
+MasterTable <- MasterTable[which(MasterTable$EnhCall_DMSO_REF == 1 | MasterTable$EnhCall_DMSO_ALT == 1 | MasterTable$EnhCall_TG_REF == 1 | MasterTable$EnhCall_TG_ALT == 1),]
+MasterTable <- MasterTable[which(MasterTable$REF_DMSO_TG_EnhCall != 0 | MasterTable$ALT_DMSO_TG_EnhCall != 0),]
+
+############################## 'Complex Heatmap' -1 
+library(ComplexHeatmap); library(circlize); library(cluster)
+col_fun = colorRamp2(c(-2, 0, 2), c("green", "white", "red"))
+col_fun(seq(-3, 3))
+
+# define heatmap df
+Heatmap_df <- SNPs_With_2_Sequences_cts[which(rownames(SNPs_With_2_Sequences_cts) %in% MasterTable$SNP_ID),]
+Heatmap_df <- Heatmap_df[match(MasterTable$SNP_ID, rownames(Heatmap_df)), ]
+
+# define heatmap matrix
+Heatmap_mat <- t(as.matrix(scale(t(Heatmap_df), center = TRUE, scale = TRUE)))
+
+# heatmap annotation - 1
+MasterTable$AnnotationVec1 <- as.character((MasterTable$REF_DMSO_TG_EnhCall == -1 | MasterTable$ALT_DMSO_TG_EnhCall == -1)*-1 + (MasterTable$REF_DMSO_TG_EnhCall == 1 | MasterTable$ALT_DMSO_TG_EnhCall == 1)*1)
+MasterTable$AnnotationVec2 <- as.character((MasterTable$caQTLsss == 1)*1)
+MasterTable$AnnotationVec3 <- as.character((MasterTable$T2D_Associated == 1)*1)
+
+set.seed(2343423)
+# Heatmap
+col_fun = colorRamp2(c(-3, 0, 3), c("yellow", "white", "red"))
+col_fun = colorRamp2(c(-3, 0, 3), c("blue", "white", "red"))
+col_fun(seq(-3, 3, by = 0.5))
+ht1 <- Heatmap(Heatmap_mat, km = 4, 
+  clustering_method_rows = "median", row_dend_reorder = TRUE, clustering_distance_rows = "manhattan", cluster_columns = FALSE, show_row_names = FALSE, col = col_fun) + 
+  rowAnnotation(Calls=MasterTable$AnnotationVec1, col = list(Calls = c("1" = "red", "-1" = "blue"))) + 
+  rowAnnotation(Calls=MasterTable$AnnotationVec2, col = list(Calls = c("1" = "red", "0" = "white"))) +
+  rowAnnotation(Calls=MasterTable$AnnotationVec3, col = list(Calls = c("1" = "green", "0" = "white")))
+ht1
+ht2 = draw(ht1)
+row_order(ht2)
+
+
+```
+
+
+
+

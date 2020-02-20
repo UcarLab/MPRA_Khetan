@@ -1,0 +1,189 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+# Needs to be changed according to user #
+
+path <- "~/Desktop/Lab/MPRA_MIN6/CompiledCode/"
+
+# Needs to be changed according to user #
+```
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath(path)) 
+```
+
+
+# Read Master Table and Annotate
+```{r}
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Enhancer_AnyAllele_AnyCondition <- (MasterTable$EnhCall_Baseline_REF==1 | MasterTable$EnhCall_Baseline_ALT==1 | MasterTable$EnhCall_DMSO_REF==1 | MasterTable$EnhCall_DMSO_ALT==1 | MasterTable$EnhCall_TG_REF==1 | MasterTable$EnhCall_TG_ALT==1)*1
+
+# Annotate: sequence similarity with mouse
+MasterTable$Conservation <- 0
+
+# At least 20% Conserved
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Human_to_Mouse/MPRA_Loci_hg19_to_mm9_Mapped_.20_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 1
+  
+  # At least 40% Conserved
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Human_to_Mouse/MPRA_Loci_hg19_to_mm9_Mapped_.40_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 2
+  
+  # At least 60% Conserved
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Human_to_Mouse/MPRA_Loci_hg19_to_mm9_Mapped_.60_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 3
+  
+  # At least 80% Conserved
+  ConservedRegions <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Human_to_Mouse/MPRA_Loci_hg19_to_mm9_Mapped_.80_Multiple.bed", header=F)[,4]
+  MasterTable$Conservation[which(MasterTable$SNP_ID %in% paste(ConservedRegions, "A_B", sep="_"))] <- 4 
+
+# Obtain Table
+ProbEnhCall_Table <- table(MasterTable[,c("Enhancer_AnyAllele_AnyCondition", "Conservation")])
+ProbEnhCall_Table_0 <- table(MasterTable[which(MasterTable$ATAC_Peak==0),c("Enhancer_AnyAllele_AnyCondition", "Conservation")])
+ProbEnhCall_Table_1 <- table(MasterTable[which(MasterTable$ATAC_Peak==1),c("Enhancer_AnyAllele_AnyCondition", "Conservation")])
+
+# scatter plot
+plot(ProbEnhCall_Table_0[2,]/(ProbEnhCall_Table_0[1,]+ProbEnhCall_Table_0[2,]), xlab="Sequence Conservation", ylab="Probability of enhancer call", 
+     ylim=c(0, 0.5), pch=19, type="b", col="green")
+points(ProbEnhCall_Table_1[2,]/(ProbEnhCall_Table_1[1,]+ProbEnhCall_Table_1[2,]), 
+       ylim=c(0, 0.5), pch=19, type="b", col="brown")
+points(ProbEnhCall_Table[2,]/(ProbEnhCall_Table[1,]+ProbEnhCall_Table[2,]), 
+       ylim=c(0, 0.5), pch=19, type="b", col="black")
+
+# Fisher's Exact Tests
+fisher.test(table(MasterTable[which(MasterTable$Conservation==0), c("ATAC_Peak", "Enhancer_AnyAllele_AnyCondition")]))
+fisher.test(table(MasterTable[which(MasterTable$Conservation==1), c("ATAC_Peak", "Enhancer_AnyAllele_AnyCondition")]))
+fisher.test(table(MasterTable[which(MasterTable$Conservation==2), c("ATAC_Peak", "Enhancer_AnyAllele_AnyCondition")]))
+fisher.test(table(MasterTable[which(MasterTable$Conservation==3), c("ATAC_Peak", "Enhancer_AnyAllele_AnyCondition")]))
+fisher.test(table(MasterTable[which(MasterTable$Conservation==4), c("ATAC_Peak", "Enhancer_AnyAllele_AnyCondition")]))
+```
+
+# Distance to ATAC-seq peak summit analysis
+```{r}
+# Annotate: Distance to ATAC-seq peak summit
+SNPs_DistanceToSummit <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_DistanceToSummit_ConsensusPeakCoordinates.txt", header = T)
+SNPs_DistanceToSummit$SNP_ID <- paste(SNPs_DistanceToSummit$SNP, "A_B", sep = "_")
+SNPs_DistanceToSummit <- SNPs_DistanceToSummit[,c("SNP_ID", "MedianDistance_SNP_Summit", "numIslets")]
+temp <- merge(MasterTable, SNPs_DistanceToSummit, by = "SNP_ID")
+MasterTable <- temp; rm(temp)
+
+# Figure 3D
+library(sm)
+sm.density.compare(MasterTable$MedianDistance_SNP_Summit, 
+                   MasterTable$Enhancer_AnyAllele_AnyCondition,
+                   xlab="Distance To Islet Peak Summit", xlim=c(-300, 300), model="equal")
+title(main="Median Distance To Islet Peak Summit (enhancers/not-enhancers)")
+
+################# Enhancer call probability: Summit or not VS numIslets: Figure 3E
+MasterTable$SequenceTestedContainsPeakSummit <- (abs(MasterTable$MedianDistance_SNP_Summit)<100)*1
+temp <- table(MasterTable$numIslets[which(MasterTable$SequenceTestedContainsPeakSummit==1)], MasterTable$Enhancer_AnyAllele_AnyCondition[which(MasterTable$SequenceTestedContainsPeakSummit==1)])
+temp[,2]/(temp[,1]+temp[,2])
+plot(temp[,2]/(temp[,1]+temp[,2]), ylab="Probability of Enhancer Call", xlim = c(1,19),
+     type="b", pch=19, ylim=c(0.12,0.70), col="red")
+Table_With <- temp
+axis(side = 1, at = 1:19, labels = 1:19)
+temp <- table(MasterTable$numIslets[which(MasterTable$SequenceTestedContainsPeakSummit==0)], MasterTable$Enhancer_AnyAllele_AnyCondition[which(MasterTable$SequenceTestedContainsPeakSummit==0)])
+temp[,2]/(temp[,1]+temp[,2])
+points(temp[,2]/(temp[,1]+temp[,2]), 
+       type="b", pch=19, col="blue")
+Table_WithoutSummit <- temp
+
+############### Histogram of numIslets Tested
+temp_Table_numIslets <- table(MasterTable[,c("SequenceTestedContainsPeakSummit", "numIslets")])
+barplot(temp_Table_numIslets, main="numIslets",
+        xlab="Number of Islets", col=c("darkblue","red"),
+        legend = rownames(temp_Table_numIslets))
+```
+
+
+# Compare_Human_Mouse_SequenceConservation_Continuous
+```{r}
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$Enhancer_AnyAllele_AnyCondition <- (MasterTable$EnhCall_Baseline_REF==1 | MasterTable$EnhCall_Baseline_ALT==1 | MasterTable$EnhCall_DMSO_REF==1 | MasterTable$EnhCall_DMSO_ALT==1 | MasterTable$EnhCall_TG_REF==1 | MasterTable$EnhCall_TG_ALT==1)*1
+
+# Read Mouse-Conservation file
+ConservedMouse <- read.table("./Reference_Files/All_SNPs_Info/LiftOver_MammalianSpecies/Human_to_Mouse/MPRA_Loci_Conservation_Mouse.bed", header=T)
+ConservedMouse$SNP <- paste(ConservedMouse$SNP, "A_B", sep="_")
+temp <- merge(MasterTable, ConservedMouse, by.x="SNP_ID", by.y="SNP")
+rownames(temp) <- temp$Row.names
+MasterTable <- unique(temp[,-1])
+
+library(sm)
+sm.density.compare(MasterTable$Conservation_Mouse, 
+                   MasterTable$Enhancer_AnyAllele_AnyCondition,
+                   xlab="Human-Mouse Sequence Similarity", xlim=c(0, 100), model="equal")
+title(main="Human-Mouse Sequence Similarity (enhancers/not-enhancers)")
+
+```
+
+
+# Distance to ATAC-seq peak summit of caQTLs
+```{r}
+MasterTable <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+MasterTable$caQTLsss[which(MasterTable$caQTLsss==1 & MasterTable$NONcaQTs==1)] <- 0
+MasterTable$Enhancer_AnyAllele_AnyCondition <- (MasterTable$EnhCall_Baseline_REF==1 | MasterTable$EnhCall_Baseline_ALT==1 | MasterTable$EnhCall_DMSO_REF==1 | MasterTable$EnhCall_DMSO_ALT==1 | MasterTable$EnhCall_TG_REF==1 | MasterTable$EnhCall_TG_ALT==1)*1
+
+# Annotate: Distance to ATAC-seq peak summit
+SNPs_DistanceToSummit <- read.table("./Reference_Files/T1D_khetan_All_20180111.asi.probes.Sequence.SnpID.CHR.START_DistanceToSummit_ConsensusPeakCoordinates.txt", header = T)
+SNPs_DistanceToSummit$SNP_ID <- paste(SNPs_DistanceToSummit$SNP, "A_B", sep = "_")
+SNPs_DistanceToSummit <- SNPs_DistanceToSummit[,c("SNP_ID", "MedianDistance_SNP_Summit", "numIslets")]
+temp <- merge(MasterTable, SNPs_DistanceToSummit, by = "SNP_ID")
+MasterTable <- temp; rm(temp)
+MasterTable$MedianDistance_SNP_Summit <- abs(MasterTable$MedianDistance_SNP_Summit)
+
+########## Create Interactions
+MasterTable$Interaction_caQTL_notCaQTL <- interaction(MasterTable$NONcaQTs, MasterTable$caQTLsss)
+MasterTable$Interaction_Enhancers_AllelicCalls <- interaction(MasterTable$Enhancer_AnyAllele_AnyCondition)
+MasterTable$Interaction_caQTL_notCaQTL_Enhancers_AllelicCalls <- interaction(MasterTable$Interaction_caQTL_notCaQTL, MasterTable$Interaction_Enhancers_AllelicCalls)
+
+########### Boxplot
+MasterTable <- MasterTable[which(MasterTable$caQTLsss==1 |  MasterTable$NONcaQTs==1),]
+MasterTable$Interaction_caQTL_notCaQTL_Enhancers_AllelicCalls <- droplevels(MasterTable$Interaction_caQTL_notCaQTL_Enhancers_AllelicCalls)
+boxplot(MedianDistance_SNP_Summit ~ Interaction_caQTL_notCaQTL_Enhancers_AllelicCalls, data=MasterTable, 
+        outline=FALSE, notch=TRUE)
+
+pairwise.wilcox.test(x = MasterTable$MedianDistance_SNP_Summit, 
+                     g = MasterTable$Interaction_caQTL_notCaQTL_Enhancers_AllelicCalls, p.adjust.method="bonferroni")
+```
+
+# Probability of caQTLs showing MPRA activity / allelic skew 
+```{r}
+# Probability: MPRA activity
+MasterTable$Interaction_caQTL_notCaQTL <- droplevels(MasterTable$Interaction_caQTL_notCaQTL)
+EnhTable <- table(MasterTable$Enhancer_AnyAllele_AnyCondition, MasterTable$Interaction_caQTL_notCaQTL)
+barplot(EnhTable[2,]/(EnhTable[1,]+EnhTable[2,]), ylim=c(0, 0.5),
+        names = c("not-caQTL", "caQTL"), col = c("blue", "red"), ylab = "Probability of MPRA activity",
+        main = "MPRA activity")
+fisher.test(EnhTable)
+
+# Probability: Allelic Skew
+AllelicSkew_FDR <- 0.10
+MasterTable$AllelicSkew_AnyCondition <- ( (MasterTable$Baseline_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$Baseline_AllelicSkew_p.adj >0) | 
+                                            (MasterTable$DMSO_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$DMSO_AllelicSkew_p.adj > 0) | 
+                                            (MasterTable$TG_AllelicSkew_p.adj < AllelicSkew_FDR & MasterTable$TG_AllelicSkew_p.adj > 0) )*1
+MasterTable <- MasterTable[which(MasterTable$Enhancer_AnyAllele_AnyCondition==1),]
+AllelicSkew <- table(MasterTable$AllelicSkew_AnyCondition, MasterTable$Interaction_caQTL_notCaQTL)
+barplot(AllelicSkew[2,]/(AllelicSkew[1,]+AllelicSkew[2,]), ylim=c(0, 0.5),
+        names = c("not-caQTL", "caQTL"), col = c("blue", "red"), ylab = "Allelic Skew",
+        main = "Allelic Skew")
+fisher.test(AllelicSkew)
+
+# Magnitude: Allelic Skew
+MasterTable <- MasterTable[which(MasterTable$AllelicSkew_AnyCondition == 1),]
+MasterTable$DMSO_AllelicSkew_LogFC <- abs(MasterTable$DMSO_AllelicSkew_LogFC)
+boxplot(DMSO_AllelicSkew_LogFC ~ Interaction_caQTL_notCaQTL, col = c("blue", "red"), 
+        MasterTable, outline=FALSE, notch=T, ylab="MPRA allelic skew logFC", names = c("not-caQTL", "caQTL"))
+wilcox.test(DMSO_AllelicSkew_LogFC ~ Interaction_caQTL_notCaQTL,
+        MasterTable)
+
+```
+
+

@@ -1,0 +1,134 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+```{r}
+# Needs to be changed according to user #
+
+path <- "~/Desktop/Lab/MPRA_MIN6/CompiledCode/"
+
+# Needs to be changed according to user #
+```
+
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath(path)) 
+```
+
+
+# Plot function
+```{r}
+ScatterPlot_caQTL_MPRA <- function(Islet_caQTL_MPRA_Sig, PlotTitle = "CHOOSE", XLIMS=c(0.2, 0.8), YLIMS = c(-1, 1))
+  {
+  # Colour points according to DOE
+  Islet_caQTL_MPRA_Sig$Colour <- "blue"
+  Islet_caQTL_MPRA_Sig$Colour[which(Islet_caQTL_MPRA_Sig$EffectSize>0.5 & Islet_caQTL_MPRA_Sig$logFC>0)] <- "red"
+  Islet_caQTL_MPRA_Sig$Colour[which(Islet_caQTL_MPRA_Sig$EffectSize<0.5 & Islet_caQTL_MPRA_Sig$logFC<0)] <- "red"
+  
+  # Plotting caQTL-MPRA Direction-of-effect
+  par(mai=c(1,2,1,1))
+  plot(Islet_caQTL_MPRA_Sig$EffectSize, Islet_caQTL_MPRA_Sig$logFC, main=paste(PlotTitle, cor(Islet_caQTL_MPRA_Sig$EffectSize, Islet_caQTL_MPRA_Sig$logFC), sep=" : "), 
+       cex=0.5, pch=19, xlab="caQTL Effect Size", ylab="MPRA logFC", cex.lab=2, cex.axis=2, col = Islet_caQTL_MPRA_Sig$Colour, xlim=XLIMS, ylim=YLIMS)
+  
+  abline(h=0, col="red"); abline(v=0.5, col="red")
+  
+  Num_1_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize>0.5 & Islet_caQTL_MPRA_Sig$logFC>0),])
+  Num_2_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize<0.5 & Islet_caQTL_MPRA_Sig$logFC>0),])
+  Num_3_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize<0.5 & Islet_caQTL_MPRA_Sig$logFC<0),])
+  Num_4_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize>0.5 & Islet_caQTL_MPRA_Sig$logFC<0),])
+  
+  Buffer <- 0.05
+  xlim_minus <- XLIMS[1]  + Buffer
+  xlim_plus <- XLIMS[2] - Buffer
+  ylim_minus <- YLIMS[1] + Buffer
+  ylim_plus <- YLIMS[2] - Buffer
+  
+  text(x=c(xlim_plus, xlim_minus, xlim_minus, xlim_plus), y=c(ylim_plus, ylim_plus, ylim_minus, ylim_minus), 
+       labels = paste("N", as.character(c(Num_1_Quadrant, Num_2_Quadrant, Num_3_Quadrant, Num_4_Quadrant)), sep="="), col=c("red", "blue", "red", "blue"), cex = 2)
+  
+  return(cor.test(Islet_caQTL_MPRA_Sig$EffectSize, Islet_caQTL_MPRA_Sig$logFC, method="pearson"))
+}
+
+# Plot function (Without Limits)
+ScatterPlot_WithoutLimits_caQTL_MPRA <- function(Islet_caQTL_MPRA_Sig, PlotTitle = "CHOOSE")
+{
+  # Colour points according to DOE
+  Islet_caQTL_MPRA_Sig$Colour <- "blue"
+  Islet_caQTL_MPRA_Sig$Colour[which(Islet_caQTL_MPRA_Sig$EffectSize>0.5 & Islet_caQTL_MPRA_Sig$logFC>0)] <- "red"
+  Islet_caQTL_MPRA_Sig$Colour[which(Islet_caQTL_MPRA_Sig$EffectSize<0.5 & Islet_caQTL_MPRA_Sig$logFC<0)] <- "red"
+  
+  # Plotting caQTL-MPRA Direction-of-effect
+  par(mai=c(1,2,1,1))
+  plot(Islet_caQTL_MPRA_Sig$EffectSize, Islet_caQTL_MPRA_Sig$logFC, main=paste(PlotTitle, cor(Islet_caQTL_MPRA_Sig$EffectSize, Islet_caQTL_MPRA_Sig$logFC), sep=" : "), 
+       cex=0.5, pch=19, xlab="caQTL Effect Size", ylab="MPRA logFC", cex.lab=2, cex.axis=2, col = Islet_caQTL_MPRA_Sig$Colour)
+  
+  abline(h=0, col="red"); abline(v=0.5, col="red")
+  
+  Num_1_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize>0.5 & Islet_caQTL_MPRA_Sig$logFC>0),])
+  Num_2_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize<0.5 & Islet_caQTL_MPRA_Sig$logFC>0),])
+  Num_3_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize<0.5 & Islet_caQTL_MPRA_Sig$logFC<0),])
+  Num_4_Quadrant <- nrow(Islet_caQTL_MPRA_Sig[which(Islet_caQTL_MPRA_Sig$EffectSize>0.5 & Islet_caQTL_MPRA_Sig$logFC<0),])
+  
+  Buffer <- 0.05
+  
+  xlim_minus <- min(Islet_caQTL_MPRA_Sig$EffectSize)  + Buffer
+  xlim_plus <- max(Islet_caQTL_MPRA_Sig$EffectSize) - Buffer
+  ylim_minus <- min(Islet_caQTL_MPRA_Sig$logFC) + Buffer
+  ylim_plus <- max(Islet_caQTL_MPRA_Sig$logFC) - Buffer
+  
+  text(x=c(xlim_plus, xlim_minus, xlim_minus, xlim_plus), y=c(ylim_plus, ylim_plus, ylim_minus, ylim_minus), 
+       labels = paste("N", as.character(c(Num_1_Quadrant, Num_2_Quadrant, Num_3_Quadrant, Num_4_Quadrant)), sep="="), col=c("red", "blue", "red", "blue"), cex = 2)
+}
+```
+
+
+
+```{r}
+library(pheatmap); library(ggplot2); library(DESeq2); library(ggrepel)
+
+# Read Allelic Calls
+AllelicCalls <- read.table("./Output_Files/MasterTable_MPRAactivity_AllelicSkew_AllConditions.txt", header = T)
+AllelicCalls$Baseline_FDR_Binarized <- (AllelicCalls$Baseline_AllelicSkew_p.adj < 0.10 & AllelicCalls$Baseline_AllelicSkew_p.adj > 0)*1
+AllelicCalls$DMSO_FDR_Binarized <- (AllelicCalls$DMSO_AllelicSkew_p.adj < 0.10 & AllelicCalls$DMSO_AllelicSkew_p.adj > 0)*1
+AllelicCalls$TG_FDR_Binarized <- (AllelicCalls$TG_AllelicSkew_p.adj < 0.10 & AllelicCalls$TG_AllelicSkew_p.adj > 0)*1
+AllelicCalls$SNP_ID <- paste("chr", AllelicCalls$CHR, ":", AllelicCalls$START)
+
+# Read caQTLs: (If pi<0.5 REF more accessible) (If pi>0.5 ALT more accessible) 
+Islet_caQTL <- read.table("./Reference_Files/WithoutWindows_All_caQTLs_Subset.txt", header=TRUE)
+Islet_caQTL$SNP_ID <- paste("chr", Islet_caQTL$Chromosome, ":", Islet_caQTL$SNP_Position)
+Islet_caQTL <- Islet_caQTL[,c("SNP_ID", "EffectSize", "PValue")]
+
+# Merge
+temp <- merge(AllelicCalls, Islet_caQTL, by="SNP_ID")
+AllelicCalls_caQTLeffectsize <- temp; rm(temp)
+
+# Subset: Allelic Calls only
+MPRA_caQTLs <- AllelicCalls_caQTLeffectsize[which(AllelicCalls_caQTLeffectsize$Baseline_FDR_Binarized==1 | AllelicCalls_caQTLeffectsize$DMSO_FDR_Binarized==1 | AllelicCalls_caQTLeffectsize$TG_FDR_Binarized==1),]
+
+############ caQTLs & Baseine
+MPRA_caQTLs_Subset <- MPRA_caQTLs[which(MPRA_caQTLs$Baseline_FDR_Binarized==1 & MPRA_caQTLs$caQTLsss==1), c("EffectSize", "Baseline_AllelicSkew_LogFC")]
+colnames(MPRA_caQTLs_Subset) <- c("EffectSize", "logFC")
+ScatterPlot_caQTL_MPRA(MPRA_caQTLs_Subset, "Baseline")
+ScatterPlot_WithoutLimits_caQTL_MPRA(MPRA_caQTLs_Subset, "Baseline")
+
+############ caQTLs & DMSO
+MPRA_caQTLs_Subset <- MPRA_caQTLs[which(MPRA_caQTLs$DMSO_FDR_Binarized==1 & MPRA_caQTLs$caQTLsss==1), c("EffectSize", "DMSO_AllelicSkew_LogFC")]
+colnames(MPRA_caQTLs_Subset) <- c("EffectSize", "logFC")
+ScatterPlot_caQTL_MPRA(MPRA_caQTLs_Subset, "DMSO")
+ScatterPlot_WithoutLimits_caQTL_MPRA(MPRA_caQTLs_Subset, "DMSO")
+
+############ caQTLs & TG
+MPRA_caQTLs_Subset <- MPRA_caQTLs[which(MPRA_caQTLs$TG_FDR_Binarized==1 & MPRA_caQTLs$caQTLsss==1), c("EffectSize", "TG_AllelicSkew_LogFC")]
+colnames(MPRA_caQTLs_Subset) <- c("EffectSize", "logFC")
+ScatterPlot_caQTL_MPRA(MPRA_caQTLs_Subset, "TG")
+ScatterPlot_WithoutLimits_caQTL_MPRA(MPRA_caQTLs_Subset, "TG")
+
+```
+
+
